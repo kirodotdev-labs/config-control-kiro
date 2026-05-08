@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>cckiro</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.amazon.aws.kiro.cckiro</string>
+    <key>CFBundleName</key>
+    <string>Config Control for Kiro</string>
+    <key>CFBundleVersion</key>
+    <string>VERSION_PLACEHOLDER</string>
+    <key>CFBundleShortVersionString</key>
+    <string>VERSION_PLACEHOLDER</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

@@ -1,0 +1,44 @@
+# Binaries
+cckiro
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Go coverage
+*.out
+
+# Go workspace
+go.work
+
+# Dependencies
+vendor/
+node_modules/
+client/node_modules/
+
+# Build outputs
+client/dist/
+web/dist/
+releases/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

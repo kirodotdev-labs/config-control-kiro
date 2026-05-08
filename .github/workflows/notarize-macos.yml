@@ -1,0 +1,132 @@
+name: Notarize macOS Binaries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  notarize:
+    runs-on: macos-latest
+    steps:
+      - name: Get latest release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE=$(gh api repos/${{ github.repository }}/releases/latest)
+          echo "release_id=$(echo $RELEASE | jq -r '.id')" >> $GITHUB_OUTPUT
+          echo "tag=$(echo $RELEASE | jq -r '.tag_name')" >> $GITHUB_OUTPUT
+
+      - name: Download macOS archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download ${{ steps.release.outputs.tag }} \
+            --repo ${{ github.repository }} \
+            --pattern "cckiro-mac-*.zip" \
+            --dir ./downloads
+
+      - name: Notarize and staple
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          cd downloads
+          for ARCHIVE in cckiro-mac-*.zip; do
+            echo "=== Processing $ARCHIVE ==="
+            WORK_DIR=$(mktemp -d)
+
+            # Extract .app from zip
+            unzip -q "$ARCHIVE" -d "$WORK_DIR"
+            APP_NAME=$(ls -d "$WORK_DIR"/*.app | head -1)
+
+            if [ -z "$APP_NAME" ]; then
+              echo "ERROR: No .app found in $ARCHIVE"
+              exit 1
+            fi
+
+            echo "Found: $(basename $APP_NAME)"
+
+            # Submit for notarization (zip the .app for Apple)
+            NOTARIZE_ZIP="$WORK_DIR/notarize.zip"
+            ditto -c -k --keepParent "$APP_NAME" "$NOTARIZE_ZIP"
+
+            echo "Submitting for notarization..."
+            xcrun notarytool submit "$NOTARIZE_ZIP" \
+              --apple-id "$NOTARY_APPLE_ID" \
+              --password "$NOTARY_APP_PASSWORD" \
+              --team-id "$NOTARY_TEAM_ID" \
+              --wait --no-progress -f json | tee "$WORK_DIR/result.json"
+
+            STATUS=$(cat "$WORK_DIR/result.json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))")
+            if [ "$STATUS" != "Accepted" ]; then
+              echo "ERROR: Notarization failed for $ARCHIVE (status: $STATUS)"
+              SUBMISSION_ID=$(cat "$WORK_DIR/result.json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$NOTARY_APPLE_ID" \
+                --password "$NOTARY_APP_PASSWORD" \
+                --team-id "$NOTARY_TEAM_ID" 2>&1 || true
+              exit 1
+            fi
+
+            echo "✅ Notarization accepted"
+
+            # Staple the ticket to the .app
+            echo "Stapling..."
+            xcrun stapler staple "$APP_NAME"
+            echo "✅ Stapled"
+
+            # Verify
+            echo "Verifying..."
+            spctl --assess --verbose --type execute "$APP_NAME" 2>&1
+            codesign --verify --verbose "$APP_NAME" 2>&1
+
+            # Re-zip with stapled .app
+            rm "$ARCHIVE"
+            ditto -c -k --keepParent "$APP_NAME" "$ARCHIVE"
+            rm -rf "$WORK_DIR"
+
+            echo "=== $ARCHIVE notarized and stapled ==="
+            echo ""
+          done
+
+      - name: Regenerate checksums
+        run: |
+          cd downloads
+          gh release download ${{ steps.release.outputs.tag }} \
+            --repo ${{ github.repository }} \
+            --pattern "cckiro-linux-*" \
+            --pattern "cckiro-windows-*" \
+            --dir .
+          sha256sum *.tar.gz *.zip > checksums.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Replace release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd downloads
+          RELEASE_ID=${{ steps.release.outputs.release_id }}
+          REPO=${{ github.repository }}
+
+          # Delete old mac assets and checksums
+          for ASSET_NAME in cckiro-mac-arm.zip cckiro-mac-intel.zip checksums.txt; do
+            ASSET_ID=$(gh api "repos/$REPO/releases/$RELEASE_ID/assets" --jq ".[] | select(.name==\"$ASSET_NAME\") | .id")
+            if [ -n "$ASSET_ID" ]; then
+              gh api -X DELETE "repos/$REPO/releases/assets/$ASSET_ID"
+              echo "Deleted $ASSET_NAME"
+            fi
+          done
+
+          # Upload notarized archives and new checksums
+          for FILE in cckiro-mac-arm.zip cckiro-mac-intel.zip checksums.txt; do
+            gh release upload ${{ steps.release.outputs.tag }} "$FILE" \
+              --repo $REPO --clobber
+            echo "Uploaded $FILE"
+          done
+
+          echo "=== Release updated with notarized macOS .app bundles ==="
