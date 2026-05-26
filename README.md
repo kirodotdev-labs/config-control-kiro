@@ -251,6 +251,12 @@ graph LR
 
 ## Resources
 
+### ⚡ Create an Agent in 30 Seconds
+
+https://github.com/user-attachments/assets/78b4de1d-4b1d-4f04-a65b-3b75facc1795
+
+### 🎮 KiroPong
+
 Run this workshop in your organization to explore Config Control for Kiro and Kiro CLI features — 45 minutes, no AWS account required.
 
 <img src="https://raw.githubusercontent.com/cckiro/assets/main/kiropong/kiropong-gameplay.gif" alt="KiroPong gameplay" width="600" />
