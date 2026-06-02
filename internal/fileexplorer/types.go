@@ -102,3 +102,9 @@ type ConflictInfo struct {
 	DestPath string `json:"destPath"`
 	Exists   bool   `json:"exists"`
 }
+
+// ResolvePathRequest is the request payload for resolving and validating a
+// user-provided path that may be in Linux, macOS or Windows format.
+type ResolvePathRequest struct {
+	Path string `json:"path"`
+}

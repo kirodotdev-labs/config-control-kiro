@@ -348,6 +348,31 @@ const SkillsFileTree = ({ title, basePath, onFileSelect, onSelectionChange, show
 
           {folders.map((folder) => renderFolder(folder, 1))}
         </List>
+
+        {/* Right-click hint — always visible in the blank space. The
+            wording adapts so users see relevant guidance whether the
+            tree is empty or populated. */}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flex: 1,
+            minHeight: 80,
+            px: 2,
+            py: 3,
+            pointerEvents: 'none',
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{ color: 'text.disabled', fontStyle: 'italic', textAlign: 'center' }}
+          >
+            {rootFiles.length === 0 && folders.length === 0
+              ? 'Right-click here to create'
+              : 'Right-click here to create, or right-click a file or folder for options. Left-click a file to edit.'}
+          </Typography>
+        </Box>
       </Box>
 
       {/* Context Menu */}

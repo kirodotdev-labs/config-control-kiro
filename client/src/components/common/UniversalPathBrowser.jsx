@@ -4,19 +4,23 @@ import { FolderOpen } from '@mui/icons-material';
 import FileBrowserDialog from './FileBrowserDialog';
 
 /**
- * Universal Path Browser - Simplified wrapper for FileBrowserDialog
- * Allows selecting both files and directories without managing dialog state
- * 
- * @param {string} label - Button label (default: "Browse")
- * @param {function} onSelect - Callback when path is selected (receives file:// URI)
- * @param {string} title - Dialog title (default: "Select File or Directory")
- * @param {object} buttonProps - Additional MUI Button props
+ * Universal Path Browser — opens FileBrowserDialog and forwards the
+ * selected file:// URI back via onSelect.
+ *
+ * @param {string} [label="Browse"] - Button label
+ * @param {function} onSelect - Callback when a path is selected (file:// URI)
+ * @param {string} [title="Select File or Directory"]
+ * @param {object} [buttonProps] - Additional MUI Button props
+ * @param {string} [initialPath] - When provided, the dialog opens
+ *   pre-navigated to this path (or its parent if it is a file). Accepts
+ *   any common OS format and is resolved via the backend before opening.
  */
-const UniversalPathBrowser = ({ 
-  label = "Browse", 
-  onSelect, 
+const UniversalPathBrowser = ({
+  label = "Browse",
+  onSelect,
   title = "Select File or Directory",
-  buttonProps = {}
+  buttonProps = {},
+  initialPath = '',
 }) => {
   const [open, setOpen] = useState(false);
 
@@ -41,6 +45,7 @@ const UniversalPathBrowser = ({
         onClose={() => setOpen(false)}
         onFileSelect={handleSelect}
         title={title}
+        initialPath={initialPath}
       />
     </>
   );

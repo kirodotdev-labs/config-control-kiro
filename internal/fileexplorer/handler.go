@@ -329,3 +329,23 @@ func (h *Handler) GenerateUniqueName(w http.ResponseWriter, r *http.Request) {
 		"uniqueName": uniqueName,
 	})
 }
+
+// ResolvePath handles POST requests that validate and translate a
+// user-provided path. The body is a JSON object with a "path" field that
+// may be a Linux, macOS or Windows-style path. The response is a
+// PathResolution describing whether the path is valid, what it points to,
+// and the canonical filesystem location to navigate to.
+//
+// This endpoint always returns HTTP 200 — invalid paths are reported
+// inside the response body so the frontend can show a helpful error
+// without being treated as a request failure.
+func (h *Handler) ResolvePath(w http.ResponseWriter, r *http.Request) {
+	var req ResolvePathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
+		return
+	}
+
+	resolution := h.service.ResolvePath(req.Path)
+	utils.RespondJSON(w, http.StatusOK, resolution)
+}

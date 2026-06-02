@@ -232,6 +232,7 @@ export default function Changelog() {
         onClose={() => setUpdateDialog(false)}
         command="kiro-cli update"
         title="Update Kiro CLI"
+        hideCustomDirectory={true}
       />
     </Box>
   );

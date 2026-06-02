@@ -11,6 +11,7 @@ import {
   ExpandMore, ExpandLess, Folder, Delete, Add
 } from '@mui/icons-material';
 import UniversalPathBrowser from '../common/UniversalPathBrowser';
+import PathInput from '../common/PathInput';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import api from '../../services/api';
 
@@ -23,6 +24,7 @@ const ResourcesCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [steeringValue, setSteeringValue] = useState('');
   const [skillsValue, setSkillsValue] = useState('');
+  const [pastedOtherPath, setPastedOtherPath] = useState('');
 
   const STEERING_GLOB = mode === 'workspace'
     ? 'file://.kiro/steering/**/*.md'
@@ -236,7 +238,21 @@ const ResourcesCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
             {/* Other Resources */}
             <Box>
               <Typography variant="subtitle2" sx={{ mb: 1 }}>Other File Resources</Typography>
-              <UniversalPathBrowser label="Browse File" onSelect={handleFileSelect} buttonProps={{ variant: "outlined" }} />
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, flexWrap: 'wrap' }}>
+                <PathInput
+                  value={pastedOtherPath}
+                  onChange={setPastedOtherPath}
+                  onResolve={(result) => {
+                    if (result.valid) {
+                      handleFileSelect(`file://${result.resolvedPath}`);
+                      setPastedOtherPath('');
+                    }
+                  }}
+                  placeholder="Paste a path and press Enter (Linux, macOS, or Windows)"
+                  sx={{ flex: 1, minWidth: 240 }}
+                />
+                <UniversalPathBrowser label="Browse File" onSelect={handleFileSelect} initialPath={pastedOtherPath} buttonProps={{ variant: "outlined" }} />
+              </Box>
             </Box>
 
             {otherResources.length > 0 && (

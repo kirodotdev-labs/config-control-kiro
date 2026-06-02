@@ -12,9 +12,10 @@ import {
   RemoveCircleOutline, SwapHoriz, Star
 } from '@mui/icons-material';
 import { useQuery, useQueryClient } from 'react-query';
-import { workspaceService } from '../../services/api';
+import { workspaceService, resolvePath } from '../../services/api';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import UniversalPathBrowser from '../../components/common/UniversalPathBrowser';
+import PathInput from '../../components/common/PathInput';
 import { useNotification } from '../../hooks/useNotification';
 import NotificationSnackbar from '../../components/common/NotificationSnackbar';
 
@@ -45,12 +46,22 @@ export default function Workspaces() {
 
   const refresh = () => { refetch(); queryClient.invalidateQueries('workspace-context'); refreshWorkspace(); };
 
-  // Create new workspace
+  // Create new workspace. Validates that the parent project folder
+  // actually exists and is a directory before any backend call so we
+  // never claim success for a phantom path. The optional newFolderName
+  // is appended afterwards and may not exist yet.
   const handleCreate = async () => {
     if (!targetPath) return;
     setLoading(true);
     try {
-      const fullPath = newFolderName ? `${targetPath}/${newFolderName}` : targetPath;
+      const resolved = await resolvePath(targetPath);
+      if (!resolved.valid || resolved.type !== 'directory') {
+        showNotification(resolved.error || 'Project folder must be an existing directory', 'error');
+        setLoading(false);
+        return;
+      }
+      const base = resolved.resolvedPath;
+      const fullPath = newFolderName ? `${base}/${newFolderName}` : base;
       await workspaceService.addWorkspace(fullPath);
       if (switchAfter) await workspaceService.setContext('workspace', fullPath);
       showNotification(`Workspace created at ${fullPath}`, 'success');
@@ -63,12 +74,20 @@ export default function Workspaces() {
     setLoading(false);
   };
 
-  // Add existing workspace
+  // Add existing workspace. Requires the project folder to exist on
+  // disk. If the user pointed at the .kiro/ directory itself we step
+  // up to the project root.
   const handleAdd = async () => {
     if (!targetPath) return;
     setLoading(true);
     try {
-      let path = targetPath;
+      const resolved = await resolvePath(targetPath);
+      if (!resolved.valid || resolved.type !== 'directory') {
+        showNotification(resolved.error || 'Project folder must be an existing directory', 'error');
+        setLoading(false);
+        return;
+      }
+      let path = resolved.resolvedPath;
       if (path.endsWith('/.kiro') || path.endsWith('\\.kiro')) {
         path = path.replace(/[/\\]\.kiro$/, '');
       }
@@ -84,14 +103,22 @@ export default function Workspaces() {
     setLoading(false);
   };
 
-  // Copy workspace
+  // Copy workspace. The destination must be an existing directory —
+  // we copy the source .kiro into it.
   const handleCopy = async () => {
     if (!copyDialog || !targetPath) return;
     setLoading(true);
     try {
-      await workspaceService.copyWorkspace(copyDialog.path, targetPath);
-      await workspaceService.addWorkspace(targetPath);
-      showNotification(`Workspace copied to ${targetPath}`, 'success');
+      const resolved = await resolvePath(targetPath);
+      if (!resolved.valid || resolved.type !== 'directory') {
+        showNotification(resolved.error || 'Destination must be an existing directory', 'error');
+        setLoading(false);
+        return;
+      }
+      const dest = resolved.resolvedPath;
+      await workspaceService.copyWorkspace(copyDialog.path, dest);
+      await workspaceService.addWorkspace(dest);
+      showNotification(`Workspace copied to ${dest}`, 'success');
       refresh();
       setCopyDialog(null);
       setTargetPath('');
@@ -101,20 +128,37 @@ export default function Workspaces() {
     setLoading(false);
   };
 
-  // Import workspace from any location
+  // Import workspace from any location. Source and destination must
+  // both exist as directories; bad paths are rejected up-front so we
+  // never report a fake success.
   const handleImport = async () => {
     if (!importSource || !targetPath) return;
     setLoading(true);
     try {
-      // Auto-correct: if user selected .kiro directly, use parent as source
-      let source = importSource;
+      const [resolvedSrc, resolvedDest] = await Promise.all([
+        resolvePath(importSource),
+        resolvePath(targetPath),
+      ]);
+      if (!resolvedSrc.valid || resolvedSrc.type !== 'directory') {
+        showNotification(resolvedSrc.error || 'Source must be an existing directory', 'error');
+        setLoading(false);
+        return;
+      }
+      if (!resolvedDest.valid || resolvedDest.type !== 'directory') {
+        showNotification(resolvedDest.error || 'Destination must be an existing directory', 'error');
+        setLoading(false);
+        return;
+      }
+      // Auto-correct: if user pointed at .kiro/ itself, use the parent project.
+      let source = resolvedSrc.resolvedPath;
       if (source.endsWith('/.kiro') || source.endsWith('\\.kiro')) {
         source = source.replace(/[/\\]\.kiro$/, '');
       }
-      await workspaceService.copyWorkspace(source, targetPath);
-      await workspaceService.addWorkspace(targetPath);
-      if (switchAfter) await workspaceService.setContext('workspace', targetPath);
-      showNotification(`Workspace imported to ${targetPath}`, 'success');
+      const dest = resolvedDest.resolvedPath;
+      await workspaceService.copyWorkspace(source, dest);
+      await workspaceService.addWorkspace(dest);
+      if (switchAfter) await workspaceService.setContext('workspace', dest);
+      showNotification(`Workspace imported to ${dest}`, 'success');
       refresh();
       setImportDialog(false);
       setImportSource('');
@@ -190,6 +234,9 @@ export default function Workspaces() {
       </Typography>
 
       {/* Action buttons */}
+      <Typography variant="caption" sx={{ display: 'block', color: 'text.disabled', fontStyle: 'italic', mb: 1 }}>
+        Click an option below to get started
+      </Typography>
       <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
         <Card sx={{ flex: 1, minWidth: 200, cursor: 'pointer', '&:hover': { boxShadow: 3 } }} onClick={() => { setCreateDialog(true); setTargetPath(''); setNewFolderName(''); setSwitchAfter(true); }}>
           <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1.5, '&:last-child': { pb: 1.5 } }}>
@@ -297,9 +344,18 @@ export default function Workspaces() {
           </Typography>
           <Box sx={{ mb: 2 }}>
             <Typography variant="caption" color="text.secondary">Project folder</Typography>
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-              <TextField size="small" fullWidth value={targetPath} onChange={(e) => setTargetPath(e.target.value)} placeholder="/home/user/my-project" />
-              <UniversalPathBrowser label="Browse" onSelect={(uri) => setTargetPath(uri.replace('file://', ''))} buttonProps={{ variant: 'outlined', size: 'small' }} />
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+              <PathInput
+                value={targetPath}
+                onChange={setTargetPath}
+                onResolve={(result) => {
+                  if (result.valid) {
+                    setTargetPath(result.type === 'directory' ? result.resolvedPath : result.parentPath);
+                  }
+                }}
+                placeholder="/home/user/my-project"
+              />
+              <UniversalPathBrowser label="Browse" onSelect={(uri) => setTargetPath(uri.replace("file://", ""))} initialPath={targetPath} buttonProps={{ variant: "outlined", size: "small" }} />
             </Box>
           </Box>
           <TextField size="small" fullWidth label="Or create a new folder (optional)" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="my-new-project" sx={{ mb: 2 }} helperText="Leave empty to create .kiro in the selected folder above" />
@@ -341,9 +397,18 @@ export default function Workspaces() {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Select a project folder that has an existing .kiro directory.
           </Typography>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 2 }}>
-            <TextField size="small" fullWidth value={targetPath} onChange={(e) => setTargetPath(e.target.value)} placeholder="/home/user/my-project" />
-            <UniversalPathBrowser label="Browse" onSelect={(uri) => setTargetPath(uri.replace('file://', ''))} buttonProps={{ variant: 'outlined', size: 'small' }} />
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 2 }}>
+            <PathInput
+              value={targetPath}
+              onChange={setTargetPath}
+              onResolve={(result) => {
+                if (result.valid) {
+                  setTargetPath(result.type === 'directory' ? result.resolvedPath : result.parentPath);
+                }
+              }}
+              placeholder="/home/user/my-project"
+            />
+            <UniversalPathBrowser label="Browse" onSelect={(uri) => setTargetPath(uri.replace("file://", ""))} initialPath={targetPath} buttonProps={{ variant: "outlined", size: "small" }} />
           </Box>
           {targetPath && (
             <Alert severity="info" sx={{ mb: 2 }}>
@@ -373,9 +438,18 @@ export default function Workspaces() {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
             Select the destination project folder. The .kiro directory and all its contents will be copied there.
           </Typography>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 2 }}>
-            <TextField size="small" fullWidth value={targetPath} onChange={(e) => setTargetPath(e.target.value)} placeholder="Destination project folder" />
-            <UniversalPathBrowser label="Browse" onSelect={(uri) => setTargetPath(uri.replace('file://', ''))} buttonProps={{ variant: 'outlined', size: 'small' }} />
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 2 }}>
+            <PathInput
+              value={targetPath}
+              onChange={setTargetPath}
+              onResolve={(result) => {
+                if (result.valid) {
+                  setTargetPath(result.type === 'directory' ? result.resolvedPath : result.parentPath);
+                }
+              }}
+              placeholder="Destination project folder"
+            />
+            <UniversalPathBrowser label="Browse" onSelect={(uri) => setTargetPath(uri.replace("file://", ""))} initialPath={targetPath} buttonProps={{ variant: "outlined", size: "small" }} />
           </Box>
           {targetPath && (
             <Alert severity="info" sx={{ mb: 2 }}>
@@ -406,9 +480,18 @@ export default function Workspaces() {
           </Typography>
           <Box sx={{ mb: 2 }}>
             <Typography variant="caption" color="text.secondary">Source (project folder with .kiro)</Typography>
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-              <TextField size="small" fullWidth value={importSource} onChange={(e) => setImportSource(e.target.value)} placeholder="/path/to/source/project" />
-              <UniversalPathBrowser label="Browse" onSelect={(uri) => setImportSource(uri.replace('file://', ''))} buttonProps={{ variant: 'outlined', size: 'small' }} />
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+              <PathInput
+                value={importSource}
+                onChange={setImportSource}
+                onResolve={(result) => {
+                  if (result.valid) {
+                    setImportSource(result.type === 'directory' ? result.resolvedPath : result.parentPath);
+                  }
+                }}
+                placeholder="/path/to/source/project"
+              />
+              <UniversalPathBrowser label="Browse" onSelect={(uri) => setImportSource(uri.replace('file://', ''))} initialPath={importSource} buttonProps={{ variant: 'outlined', size: 'small' }} />
             </Box>
           </Box>
           {importSource && (importSource.endsWith('/.kiro') || importSource.endsWith('\\.kiro')) && (
@@ -418,9 +501,18 @@ export default function Workspaces() {
           )}
           <Box sx={{ mb: 2 }}>
             <Typography variant="caption" color="text.secondary">Destination (project folder to import into)</Typography>
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-              <TextField size="small" fullWidth value={targetPath} onChange={(e) => setTargetPath(e.target.value)} placeholder="/path/to/destination/project" />
-              <UniversalPathBrowser label="Browse" onSelect={(uri) => setTargetPath(uri.replace('file://', ''))} buttonProps={{ variant: 'outlined', size: 'small' }} />
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+              <PathInput
+                value={targetPath}
+                onChange={setTargetPath}
+                onResolve={(result) => {
+                  if (result.valid) {
+                    setTargetPath(result.type === 'directory' ? result.resolvedPath : result.parentPath);
+                  }
+                }}
+                placeholder="/path/to/destination/project"
+              />
+              <UniversalPathBrowser label="Browse" onSelect={(uri) => setTargetPath(uri.replace("file://", ""))} initialPath={targetPath} buttonProps={{ variant: "outlined", size: "small" }} />
             </Box>
           </Box>
           {importSource && targetPath && (

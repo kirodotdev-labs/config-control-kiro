@@ -131,7 +131,13 @@ cckiro.exe
 
 </details>
 
-The app opens in your browser automatically at `http://127.0.0.1:3030`. It only listens on localhost — nothing is exposed to the network.
+The app opens in your browser automatically. If it doesn't, paste this into your browser:
+
+```
+http://127.0.0.1:3030
+```
+
+cckiro only listens on localhost — nothing is exposed to the network.
 
 > ⚠️ **Security alerts when opening the app — this is normal.**
 >

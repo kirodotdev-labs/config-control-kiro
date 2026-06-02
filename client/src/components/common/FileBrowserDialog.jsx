@@ -1,8 +1,12 @@
 /**
  * @fileoverview Dialog component for browsing and selecting files or directories.
+ * The address bar at the top accepts pasted paths in any common OS format
+ * (Linux, macOS, Windows). When the user presses Enter, the path is
+ * validated and the browser navigates to it — directories become the new
+ * root, files navigate to their parent and pre-select the file.
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchWithAuth } from '../../services/api';
+import { fetchWithAuth, resolvePath } from '../../services/api';
 import {
   Dialog,
   DialogTitle,
@@ -16,9 +20,7 @@ import {
   ListItemButton,
   Typography,
   Box,
-  TextField,
   InputAdornment,
-  Divider
 } from '@mui/material';
 import {
   Folder,
@@ -26,16 +28,18 @@ import {
   ArrowUpward,
   Home,
   Computer,
-  FolderSpecial
+  FolderSpecial,
 } from '@mui/icons-material';
+import PathInput from './PathInput';
 
-const FileBrowserDialog = ({ 
-  open, 
-  onClose, 
-  onFileSelect, 
-  accept = '', 
-  allowDirectorySelection = true, 
-  title = 'Select File or Directory' 
+const FileBrowserDialog = ({
+  open,
+  onClose,
+  onFileSelect,
+  accept = '',
+  allowDirectorySelection = true,
+  title = 'Select File or Directory',
+  initialPath = '',
 }) => {
   const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState([]);
@@ -43,10 +47,11 @@ const FileBrowserDialog = ({
   const [selectedItem, setSelectedItem] = useState(null);
   const [systemInfo, setSystemInfo] = useState(null);
   const [windowsMode, setWindowsMode] = useState(false);
+  const [addressBar, setAddressBar] = useState('');
 
   const acceptedExtensions = accept ? accept.split(',').map(ext => ext.trim().replace('.', '')) : [];
 
-  const browseDirectory = useCallback(async (path = '') => {
+  const browseDirectory = useCallback(async (path = '', highlightName = '') => {
     setLoading(true);
     setSelectedItem(null);
     try {
@@ -54,9 +59,13 @@ const FileBrowserDialog = ({
       const data = await response.json();
       setCurrentPath(data.currentPath);
       setFiles(data.items || []);
-      
-      // Detect if we're in Windows territory (under /mnt/c)
       setWindowsMode(data.currentPath.startsWith('/mnt/c'));
+      // If we navigated to a parent because the user pasted a file path,
+      // pre-select that file in the list.
+      if (highlightName) {
+        const match = (data.items || []).find(item => item.name === highlightName);
+        if (match) setSelectedItem(match);
+      }
     } catch (error) {
       console.error('Error browsing directory:', error);
     }
@@ -69,13 +78,51 @@ const FileBrowserDialog = ({
         .then(res => res.json())
         .then(data => {
           setSystemInfo(data);
-          browseDirectory();
+          openInitial();
         })
         .catch(() => {
-          browseDirectory();
+          openInitial();
         });
     }
-  }, [open, browseDirectory]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // openInitial decides where to land when the dialog first opens.
+  // If a non-empty initialPath was provided, resolve it (handles
+  // cross-OS formats and WSL translation) and navigate there. If the
+  // path is a file, navigate to its parent and pre-select the file.
+  // Falls back to home directory if the initial path is missing or
+  // cannot be resolved.
+  async function openInitial() {
+    const seed = (initialPath || '').trim();
+    if (!seed) {
+      browseDirectory();
+      return;
+    }
+    try {
+      const result = await resolvePath(seed);
+      if (result.valid) {
+        if (result.type === 'directory') {
+          browseDirectory(result.resolvedPath);
+        } else {
+          const fileName = result.resolvedPath.split('/').pop();
+          browseDirectory(result.parentPath, fileName);
+        }
+      } else {
+        browseDirectory();
+      }
+    } catch (err) {
+      browseDirectory();
+    }
+  }
+
+  // Keep the address bar text in sync with the current directory whenever
+  // the browser navigates by clicking, but allow the user to overwrite it
+  // freely when typing/pasting.
+  useEffect(() => {
+    setAddressBar(getDisplayPath(currentPath));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPath, windowsMode]);
 
   const handleWindowsHome = () => {
     if (systemInfo?.username) {
@@ -86,20 +133,32 @@ const FileBrowserDialog = ({
   };
 
   const handleLinuxHome = () => {
-    browseDirectory(); // Default home directory
+    browseDirectory();
   };
 
-  // Convert Linux path to Windows display format
-  const getDisplayPath = (linuxPath) => {
-    if (windowsMode && linuxPath.startsWith('/mnt/c')) {
-      // Convert /mnt/c/Users/... to C:\Users\...
+  // Convert Linux mount path to Windows display when browsing /mnt/c.
+  function getDisplayPath(linuxPath) {
+    if (linuxPath && linuxPath.startsWith('/mnt/c')) {
       return linuxPath.replace('/mnt/c', 'C:').replace(/\//g, '\\');
     }
-    return linuxPath;
+    return linuxPath || '';
+  }
+
+  // Resolve and navigate to whatever the user typed in the address bar.
+  // Files navigate to the parent and pre-select the file; directories
+  // become the new browse root. Validation (including the inline error
+  // helper text) is handled by the PathInput component below.
+  const handleAddressBarResolve = (result) => {
+    if (!result.valid) return;
+    if (result.type === 'directory') {
+      browseDirectory(result.resolvedPath);
+    } else {
+      const fileName = result.resolvedPath.split('/').pop();
+      browseDirectory(result.parentPath, fileName);
+    }
   };
 
   const handleItemClick = (item) => {
-    // Single click: select the item (file or directory)
     if (item.type === 'directory' && allowDirectorySelection) {
       setSelectedItem(item);
     } else if (item.type === 'file') {
@@ -112,10 +171,8 @@ const FileBrowserDialog = ({
 
   const handleItemDoubleClick = async (item) => {
     if (item.type === 'directory') {
-      // Double click directory: navigate into it
       browseDirectory(item.path);
     } else {
-      // Double click file: select it immediately
       const extension = item.name?.split('.').pop()?.toLowerCase() || '';
       if (acceptedExtensions.length === 0 || acceptedExtensions.includes(extension)) {
         await selectItem(item);
@@ -126,27 +183,21 @@ const FileBrowserDialog = ({
   const selectItem = async (item) => {
     try {
       if (item.type === 'directory') {
-        // For directories, return file:// URI directly
         const uri = `file://${item.path}`;
         if (uri && item.path) {
           onFileSelect(uri);
           onClose();
-        } else {
-          console.error('Invalid directory path:', item);
         }
       } else {
-        // For files, generate URI via API
         const response = await fetchWithAuth('/api/files/generate-uri', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filePath: item.path })
+          body: JSON.stringify({ filePath: item.path }),
         });
         const data = await response.json();
         if (data.fileUri) {
           onFileSelect(data.fileUri);
           onClose();
-        } else {
-          console.error('No fileUri in response:', data);
         }
       }
     } catch (error) {
@@ -159,37 +210,68 @@ const FileBrowserDialog = ({
     browseDirectory(parentPath);
   };
 
-  const handleOpen = () => {
+  // When the user clicks the bottom "Select Directory" / "Open" button.
+  // If they have something selected in the list we use it directly. If
+  // they have unsaved text in the address bar (different from the
+  // current display path) we resolve it first and only accept the
+  // selection when the path validates — invalid paths surface inline
+  // via the PathInput error and this click becomes a no-op.
+  const handleOpen = async () => {
     if (selectedItem) {
       selectItem(selectedItem);
-    } else if (allowDirectorySelection && currentPath) {
-      // Select current directory if nothing is selected
+      return;
+    }
+    const seed = (addressBar || '').trim();
+    const isUnsavedInput = seed && seed !== getDisplayPath(currentPath);
+    if (isUnsavedInput) {
+      try {
+        const result = await resolvePath(seed);
+        if (!result.valid) return; // PathInput will already show the error
+        if (result.type === 'directory') {
+          onFileSelect(`file://${result.resolvedPath}`);
+          onClose();
+          return;
+        }
+        // It's a file. Honour it directly when files are valid choices,
+        // otherwise fall back to the parent when only directories are
+        // accepted.
+        if (allowDirectorySelection) {
+          onFileSelect(`file://${result.parentPath}`);
+        } else {
+          onFileSelect(`file://${result.resolvedPath}`);
+        }
+        onClose();
+        return;
+      } catch (err) {
+        return;
+      }
+    }
+    if (allowDirectorySelection && currentPath) {
       onFileSelect(`file://${currentPath}`);
       onClose();
     }
   };
 
   return (
-    <Dialog 
-      open={open} 
-      onClose={onClose} 
-      maxWidth="md" 
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="md"
       fullWidth
-      PaperProps={{
-        sx: { height: '70vh', display: 'flex', flexDirection: 'column' }
-      }}
+      PaperProps={{ sx: { height: '70vh', display: 'flex', flexDirection: 'column' } }}
     >
-      <DialogTitle sx={{ pb: 1 }}>
-        {title}
-      </DialogTitle>
-      
+      <DialogTitle sx={{ pb: 1 }}>{title}</DialogTitle>
+
       <DialogContent sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 0 }}>
-        {/* Address Bar */}
+        {/* Address Bar — editable. Type or paste any OS path; press Enter
+            or click elsewhere (blur) to validate. Errors surface inline. */}
         <Box sx={{ px: 2, py: 1, borderBottom: 1, borderColor: 'divider' }}>
-          <TextField
-            fullWidth
-            size="small"
-            value={getDisplayPath(currentPath)}
+          <PathInput
+            value={addressBar}
+            onChange={setAddressBar}
+            onResolve={handleAddressBarResolve}
+            placeholder="Paste a path and press Enter (Linux, macOS, or Windows format)"
+            helperText=" "
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -203,27 +285,14 @@ const FileBrowserDialog = ({
 
         {/* Toolbar */}
         <Box sx={{ px: 2, py: 1, borderBottom: 1, borderColor: 'divider', display: 'flex', gap: 1 }}>
-          <Button
-            size="small"
-            startIcon={<ArrowUpward />}
-            onClick={handleParentDirectory}
-            disabled={currentPath === '/'}
-          >
+          <Button size="small" startIcon={<ArrowUpward />} onClick={handleParentDirectory} disabled={currentPath === '/'}>
             Up
           </Button>
-          <Button
-            size="small"
-            startIcon={<Home />}
-            onClick={handleLinuxHome}
-          >
+          <Button size="small" startIcon={<Home />} onClick={handleLinuxHome}>
             Home
           </Button>
           {systemInfo?.isWSL && (
-            <Button
-              size="small"
-              startIcon={<FolderSpecial />}
-              onClick={handleWindowsHome}
-            >
+            <Button size="small" startIcon={<FolderSpecial />} onClick={handleWindowsHome}>
               Windows Home
             </Button>
           )}
@@ -236,46 +305,39 @@ const FileBrowserDialog = ({
               <Typography>Loading...</Typography>
             </Box>
           )}
-          
+
           {!loading && files.length === 0 && (
             <Box sx={{ p: 2, textAlign: 'center' }}>
               <Typography color="text.secondary">No files found</Typography>
             </Box>
           )}
-          
+
           {!loading && files.length > 0 && (
             <List dense sx={{ py: 0 }}>
               {files.map((item) => {
                 const extension = item.name?.split('.').pop()?.toLowerCase() || '';
                 const isAccepted = item.type === 'directory' || acceptedExtensions.length === 0 || acceptedExtensions.includes(extension);
                 const isSelected = selectedItem?.path === item.path;
-                
+
                 return (
-                  <ListItem 
-                    key={item.path} 
+                  <ListItem
+                    key={item.path}
                     disablePadding
-                    sx={{ 
+                    sx={{
                       backgroundColor: isSelected ? 'action.selected' : 'transparent',
-                      '&:hover': { backgroundColor: 'action.hover' }
+                      '&:hover': { backgroundColor: 'action.hover' },
                     }}
                   >
-                    <ListItemButton 
+                    <ListItemButton
                       onClick={() => handleItemClick(item)}
                       onDoubleClick={() => handleItemDoubleClick(item)}
                       disabled={!isAccepted}
-                      sx={{ 
-                        opacity: isAccepted ? 1 : 0.5,
-                        py: 0.5
-                      }}
+                      sx={{ opacity: isAccepted ? 1 : 0.5, py: 0.5 }}
                     >
                       <ListItemIcon sx={{ minWidth: 36 }}>
-                        {item.type === 'directory' ? (
-                          <Folder fontSize="small" />
-                        ) : (
-                          <InsertDriveFile fontSize="small" />
-                        )}
+                        {item.type === 'directory' ? <Folder fontSize="small" /> : <InsertDriveFile fontSize="small" />}
                       </ListItemIcon>
-                      <ListItemText 
+                      <ListItemText
                         primary={item.name}
                         primaryTypographyProps={{ fontSize: '0.875rem' }}
                       />
@@ -287,31 +349,18 @@ const FileBrowserDialog = ({
           )}
         </Box>
 
-        {/* File Name Input */}
+        {/* Footer status — keeps users oriented without a redundant filename field. */}
         <Box sx={{ px: 2, py: 1, borderTop: 1, borderColor: 'divider' }}>
-          <TextField
-            fullWidth
-            size="small"
-            label="File name"
-            value={selectedItem?.name || ''}
-            InputProps={{ readOnly: true }}
-          />
           <Typography variant="caption" color="text.secondary">
-            Files in list: {files.length}
+            {selectedItem ? `Selected: ${selectedItem.name}` : `${files.length} item${files.length === 1 ? '' : 's'}`}
           </Typography>
         </Box>
-
-        {loading && (
-          <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-            <Typography variant="body2">Loading...</Typography>
-          </Box>
-        )}
       </DialogContent>
-      
+
       <DialogActions sx={{ px: 2, py: 1 }}>
         <Button onClick={onClose}>Cancel</Button>
-        <Button 
-          onClick={handleOpen} 
+        <Button
+          onClick={handleOpen}
           variant="contained"
           disabled={!selectedItem && !(allowDirectorySelection && currentPath)}
         >

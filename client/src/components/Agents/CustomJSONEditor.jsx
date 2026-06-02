@@ -202,6 +202,7 @@ const CustomJSONEditor = React.forwardRef(({
         onClose={() => setLaunchDialog(false)}
         command={`kiro-cli chat --agent ${agent?.name || ''}`}
         title="Launch Agent"
+        showResumePicker={true}
       />
 
     </Box>

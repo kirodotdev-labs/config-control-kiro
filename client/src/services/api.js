@@ -214,4 +214,18 @@ export const fetchWithAuth = (url, options = {}) => {
   });
 };
 
+/**
+ * Resolve and validate a user-provided path. Accepts Linux, macOS, and
+ * Windows-style paths and returns whether it exists, the resolved
+ * filesystem location, the parent directory, and a user-friendly error
+ * message when validation fails.
+ *
+ * @param {string} path - Raw path string, may be in any common OS format
+ * @returns {Promise<{valid: boolean, exists: boolean, type: string, resolvedPath: string, parentPath: string, error: string}>}
+ */
+export const resolvePath = async (path) => {
+  const response = await api.post('/fileexplorer/resolve-path', { path });
+  return response.data;
+};
+
 export default api;

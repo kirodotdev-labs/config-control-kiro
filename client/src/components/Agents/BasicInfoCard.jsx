@@ -24,9 +24,11 @@ import {
   Delete
 } from '@mui/icons-material';
 import UniversalPathBrowser from '../common/UniversalPathBrowser';
+import PathInput from '../common/PathInput';
 
 const BasicInfoCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
   const [expanded, setExpanded] = useState(false);
+  const [pastedPath, setPastedPath] = useState('');
 
   const handleFieldChange = (field, value) => {
     const updatedAgent = { ...agent, [field]: value };
@@ -132,10 +134,23 @@ const BasicInfoCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
                 helperText="System prompt text and/or file:// URI"
               />
               
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, flexWrap: 'wrap' }}>
+                <PathInput
+                  value={pastedPath}
+                  onChange={setPastedPath}
+                  onResolve={(result) => {
+                    if (result.valid) {
+                      handleFileSelect(`file://${result.resolvedPath}`);
+                      setPastedPath('');
+                    }
+                  }}
+                  placeholder="Paste a path and press Enter (Linux, macOS, or Windows)"
+                  sx={{ flex: 1, minWidth: 240 }}
+                />
                 <UniversalPathBrowser
                   label="Browse File"
                   onSelect={handleFileSelect}
+                  initialPath={pastedPath}
                   buttonProps={{
                     variant: "outlined",
                     size: "small"

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -486,7 +487,52 @@ func (s *KiroService) CheckForUpdate() *models.VersionCheck {
 
 	latest := strings.TrimPrefix(release.TagName, "v")
 	result.Latest = latest
-	result.UpdateAvail = latest != s.appVersion && s.appVersion != "dev"
+	// Only flag an update when the published release is genuinely newer
+	// than the running binary. A simple string inequality used to fire
+	// "Update Available" even when the user was running a version ahead
+	// of the public release (e.g. a private/test build), which is wrong.
+	result.UpdateAvail = isVersionNewer(latest, s.appVersion) && s.appVersion != "dev"
 
 	return result
+}
+
+// isVersionNewer reports whether candidate is a strictly higher
+// dotted-numeric version than current. Both inputs are expected without
+// a leading "v" prefix; callers strip it. Non-numeric components or
+// completely empty inputs make this return false so we never
+// incorrectly suggest an update.
+func isVersionNewer(candidate, current string) bool {
+	if candidate == "" || current == "" || current == "dev" {
+		return false
+	}
+	cParts := strings.Split(candidate, ".")
+	curParts := strings.Split(current, ".")
+	maxLen := len(cParts)
+	if len(curParts) > maxLen {
+		maxLen = len(curParts)
+	}
+	for i := 0; i < maxLen; i++ {
+		c := versionPart(cParts, i)
+		u := versionPart(curParts, i)
+		if c > u {
+			return true
+		}
+		if c < u {
+			return false
+		}
+	}
+	return false
+}
+
+// versionPart returns the integer at index i of the parts slice or 0
+// when the index is out of range or the value is non-numeric.
+func versionPart(parts []string, i int) int {
+	if i >= len(parts) {
+		return 0
+	}
+	n, err := strconv.Atoi(parts[i])
+	if err != nil {
+		return 0
+	}
+	return n
 }

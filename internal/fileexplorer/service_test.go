@@ -9,7 +9,7 @@ import (
 )
 
 func newTestService() *FileExplorerService {
-	return NewFileExplorerService(utils.NewLogger())
+	return NewFileExplorerService(utils.NewLogger(), false)
 }
 
 func TestBrowse(t *testing.T) {
@@ -210,4 +210,52 @@ func TestCheckConflicts(t *testing.T) {
 	if len(conflicts) != 1 {
 		t.Errorf("expected 1 conflict, got %d", len(conflicts))
 	}
+}
+
+
+func TestResolvePathService(t *testing.T) {
+	svc := newTestService()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "x.txt")
+	os.WriteFile(filePath, []byte("hello"), 0644)
+
+	t.Run("valid directory", func(t *testing.T) {
+		res := svc.ResolvePath(dir)
+		if !res.Valid {
+			t.Fatalf("expected valid, got %s", res.Error)
+		}
+		if res.Type != "directory" {
+			t.Errorf("expected directory, got %s", res.Type)
+		}
+	})
+
+	t.Run("valid file", func(t *testing.T) {
+		res := svc.ResolvePath(filePath)
+		if !res.Valid {
+			t.Fatalf("expected valid, got %s", res.Error)
+		}
+		if res.Type != "file" {
+			t.Errorf("expected file, got %s", res.Type)
+		}
+		if res.ParentPath != dir {
+			t.Errorf("expected parent=%s, got %s", dir, res.ParentPath)
+		}
+	})
+
+	t.Run("invalid path returns error in body", func(t *testing.T) {
+		res := svc.ResolvePath("/nonexistent/path/xyz")
+		if res.Valid {
+			t.Fatal("expected invalid")
+		}
+		if res.Error == "" {
+			t.Fatal("expected error message")
+		}
+	})
+
+	t.Run("traversal blocked", func(t *testing.T) {
+		res := svc.ResolvePath("/tmp/../etc/passwd")
+		if res.Valid {
+			t.Fatal("expected invalid for traversal")
+		}
+	})
 }

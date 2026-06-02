@@ -12,7 +12,7 @@ import (
 )
 
 func newTestHandler() *Handler {
-	return NewHandler(NewFileExplorerService(utils.NewLogger()))
+	return NewHandler(NewFileExplorerService(utils.NewLogger(), false))
 }
 
 func TestHandler_Browse(t *testing.T) {
@@ -198,4 +198,75 @@ func TestHandler_PathTraversal(t *testing.T) {
 			}
 		})
 	}
+}
+
+
+func TestHandler_ResolvePath(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "ok.txt")
+	os.WriteFile(filePath, []byte("hi"), 0644)
+
+	t.Run("valid directory", func(t *testing.T) {
+		h := newTestHandler()
+		body := strings.NewReader(`{"path":"` + dir + `"}`)
+		req := httptest.NewRequest("POST", "/api/fileexplorer/resolve-path", body)
+		w := httptest.NewRecorder()
+
+		h.ResolvePath(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), `"valid":true`) {
+			t.Errorf("expected valid:true in response, got %s", w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), `"type":"directory"`) {
+			t.Errorf("expected type:directory, got %s", w.Body.String())
+		}
+	})
+
+	t.Run("valid file", func(t *testing.T) {
+		h := newTestHandler()
+		body := strings.NewReader(`{"path":"` + filePath + `"}`)
+		req := httptest.NewRequest("POST", "/api/fileexplorer/resolve-path", body)
+		w := httptest.NewRecorder()
+
+		h.ResolvePath(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), `"type":"file"`) {
+			t.Errorf("expected type:file, got %s", w.Body.String())
+		}
+	})
+
+	t.Run("invalid path returns 200 with error in body", func(t *testing.T) {
+		h := newTestHandler()
+		body := strings.NewReader(`{"path":"/no/such/path/xyz"}`)
+		req := httptest.NewRequest("POST", "/api/fileexplorer/resolve-path", body)
+		w := httptest.NewRecorder()
+
+		h.ResolvePath(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 (errors in body), got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), `"valid":false`) {
+			t.Errorf("expected valid:false, got %s", w.Body.String())
+		}
+	})
+
+	t.Run("malformed JSON returns 400", func(t *testing.T) {
+		h := newTestHandler()
+		body := strings.NewReader(`not json`)
+		req := httptest.NewRequest("POST", "/api/fileexplorer/resolve-path", body)
+		w := httptest.NewRecorder()
+
+		h.ResolvePath(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
 }

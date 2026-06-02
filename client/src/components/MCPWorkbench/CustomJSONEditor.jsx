@@ -267,6 +267,7 @@ const CustomJSONEditor = ({
         onClose={() => setLaunchDialog(false)}
         command="kiro-cli chat"
         title="Launch Kiro CLI"
+        showResumePicker={true}
       />
 
     </Box>

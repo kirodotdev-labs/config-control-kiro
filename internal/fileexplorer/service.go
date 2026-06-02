@@ -14,12 +14,16 @@ import (
 // reading, creating, copying, moving, renaming, and deleting files and folders.
 type FileExplorerService struct {
 	logger *utils.Logger
+	isWSL  bool
 }
 
-// NewFileExplorerService creates a new FileExplorerService.
-func NewFileExplorerService(logger *utils.Logger) *FileExplorerService {
+// NewFileExplorerService creates a new FileExplorerService. Set isWSL to true
+// when running inside Windows Subsystem for Linux so pasted Windows-style
+// paths can be translated to /mnt/<drive>/... mount points.
+func NewFileExplorerService(logger *utils.Logger, isWSL bool) *FileExplorerService {
 	return &FileExplorerService{
 		logger: logger,
+		isWSL:  isWSL,
 	}
 }
 
@@ -384,4 +388,24 @@ func (s *FileExplorerService) GenerateUniqueName(basePath, name string) string {
 		newPath = filepath.Join(basePath, newName)
 		counter++
 	}
+}
+
+
+// ResolvePath validates and translates a user-provided path string. It
+// accepts Linux, macOS and Windows path formats, translates Windows-style
+// paths to /mnt/<drive>/... when running in WSL, expands "~", rejects
+// path-traversal attempts, and reports whether the resolved location
+// exists and whether it is a file or directory.
+//
+// The frontend uses the result to navigate: directories become the new
+// browse root, while files cause navigation to their parent directory so
+// the file can be highlighted there.
+func (s *FileExplorerService) ResolvePath(rawPath string) *utils.PathResolution {
+	res := utils.ResolvePath(rawPath, s.isWSL)
+	if res.Valid {
+		s.logger.Info("Path resolved: input=%q -> %s (type=%s)", rawPath, res.ResolvedPath, res.Type)
+	} else {
+		s.logger.Warn("Path resolution failed: input=%q error=%s", rawPath, res.Error)
+	}
+	return &res
 }

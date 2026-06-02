@@ -64,7 +64,7 @@ func main() {
 	agentHandler := agent.NewHandler(agentService)
 	fileService := file.NewFileService(logger)
 	fileHandler := file.NewHandler(fileService)
-	fileExplorerService := fileexplorer.NewFileExplorerService(logger)
+	fileExplorerService := fileexplorer.NewFileExplorerService(logger, kiroService.IsWSL())
 	fileExplorerHandler := fileexplorer.NewHandler(fileExplorerService)
 	dashboardService := dashboard.NewDashboardService(kiroService, mcpService, agentService, logger)
 	dashboardHandler := dashboard.NewHandler(dashboardService)
@@ -229,6 +229,7 @@ func setupRouter(systemHandler *system.Handler, mcpHandler *mcp.Handler, agentHa
 	api.HandleFunc("/fileexplorer/bulk-delete", fileExplorerHandler.BulkDelete).Methods("POST")
 	api.HandleFunc("/fileexplorer/check-conflicts", fileExplorerHandler.CheckConflicts).Methods("POST")
 	api.HandleFunc("/fileexplorer/unique-name", fileExplorerHandler.GenerateUniqueName).Methods("GET")
+	api.HandleFunc("/fileexplorer/resolve-path", fileExplorerHandler.ResolvePath).Methods("POST")
 
 	// Serve static files
 	webFS, _ := fs.Sub(webFiles, "web/dist")
