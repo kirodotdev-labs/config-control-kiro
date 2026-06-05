@@ -19,16 +19,18 @@ import (
 // supporting both global and workspace-scoped agents.
 type AgentService struct {
 	kiroService *system.KiroService
+	logger      *utils.Logger
 }
 
 // NewAgentService creates an AgentService and ensures the agents
 // directory exists under the active config path.
-func NewAgentService(kiroService *system.KiroService) *AgentService {
+func NewAgentService(kiroService *system.KiroService, logger *utils.Logger) *AgentService {
 	// Ensure agents directory exists
 	agentsDir := filepath.Join(kiroService.GetConfigPath(), "agents")
 	os.MkdirAll(agentsDir, 0755)
 	return &AgentService{
 		kiroService: kiroService,
+		logger:      logger,
 	}
 }
 
@@ -50,6 +52,8 @@ func (s *AgentService) GetAllAgents() ([]models.Agent, error) {
 		agent, err := s.loadAgentFromFile(path)
 		if err == nil {
 			agents = append(agents, agent)
+		} else {
+			s.logger.Warn("Failed to load agent %s: %v", path, err)
 		}
 		return nil
 	})

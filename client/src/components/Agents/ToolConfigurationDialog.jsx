@@ -79,12 +79,14 @@ const ToolConfigurationDialog = ({ open, onClose, agent, onAgentChange }) => {
     
     // Clean tools array
     const cleanedTools = (localAgent.tools || []).filter(tool => {
+      if (typeof tool !== 'string') return true;
       if (tool === '*' || !tool.startsWith('@')) return true;
       return validServerPrefixes.some(prefix => tool === prefix || tool.startsWith(`${prefix}/`));
     });
     
     // Clean allowedTools array
     const cleanedAllowedTools = (localAgent.allowedTools || []).filter(tool => {
+      if (typeof tool !== 'string') return true;
       if (!tool.startsWith('@')) return true;
       return validServerPrefixes.some(prefix => tool === prefix || tool.startsWith(`${prefix}/`));
     });

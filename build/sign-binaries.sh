@@ -3,7 +3,7 @@ set -e
 
 # Sign Binaries Script
 # Signs Windows (Authenticode) and macOS (CDSigner) binaries
-# Requires: aws cli, awscurl, jq, and Isengard credentials for account 382967313053
+# Requires: aws cli, awscurl, jq, and signing account credentials
 
 REGION="us-east-1"
 CDSIGNER_REGION="us-west-2"
@@ -38,7 +38,7 @@ for bin in releases/cckiro.exe releases/cckiro-mac-intel releases/cckiro-mac-arm
 done
 
 # Get credentials
-echo "Paste Isengard credentials for account 382967313053,"
+echo "Enter credentials,"
 echo "then press Enter on an empty line when done:"
 echo ""
 CREDS=""

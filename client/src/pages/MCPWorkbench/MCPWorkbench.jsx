@@ -27,6 +27,7 @@ const MCPWorkbench = () => {
   const { notification, showNotification, hideNotification } = useNotification();
   const [loading, setLoading] = useState(true);
   const [serverTools, setServerTools] = useState({});
+  const [loadingTools, setLoadingTools] = useState({});
   const [disabledTools, setDisabledTools] = useState({});
   const { leftPanelWidth, isDragging, handleMouseDown } = useResizablePanels(40, 'mcpLeftPanelWidth', 20, 80);
   
@@ -86,6 +87,12 @@ const MCPWorkbench = () => {
     try {
       const servers = config.mcpServers;
       const results = {};
+      const loading = {};
+      Object.entries(servers).forEach(([name, cfg]) => {
+        if (!cfg.disabled) loading[name] = true;
+      });
+      setLoadingTools(loading);
+
       await Promise.allSettled(
         Object.entries(servers).map(async ([name, cfg]) => {
           if (cfg.disabled) return;
@@ -95,12 +102,15 @@ const MCPWorkbench = () => {
           } catch (err) {
             console.error(`Failed to load tools for ${name}:`, err);
             results[name] = [];
+          } finally {
+            setLoadingTools(prev => ({ ...prev, [name]: false }));
           }
         })
       );
       setServerTools(results);
     } catch (error) {
       console.error('Failed to load MCP tools:', error);
+      setLoadingTools({});
     }
   };
 
@@ -532,6 +542,7 @@ const MCPWorkbench = () => {
               onServerEdit={handleServerEdit}
               selectedServer={selectedServer}
               serverTools={serverTools}
+              loadingTools={loadingTools}
               disabledTools={disabledTools}
               onToolToggle={handleToolToggle}
             />

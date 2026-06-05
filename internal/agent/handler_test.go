@@ -21,7 +21,7 @@ func newTestHandler(t *testing.T) (*Handler, string) {
 	kiroSvc := system.NewKiroService(logger, "test")
 	kiroSvc.SetWorkspace(dir)
 	os.MkdirAll(filepath.Join(dir, ".kiro", "agents"), 0755)
-	svc := NewAgentService(kiroSvc)
+	svc := NewAgentService(kiroSvc, logger)
 	return NewHandler(svc), dir
 }
 

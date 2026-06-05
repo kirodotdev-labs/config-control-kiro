@@ -81,7 +81,7 @@ const ResourcesCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
     const value = event.target.value;
     if (!value) return;
     setSteeringValue('');
-    if (resources.includes(value)) return;
+    if (resources.some(r => r === value)) return;
     handleResourcesChange([...resources, value]);
   };
 
@@ -90,29 +90,34 @@ const ResourcesCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
     const value = event.target.value;
     if (!value) return;
     setSkillsValue('');
-    if (resources.includes(value)) return;
+    if (resources.some(r => r === value)) return;
     handleResourcesChange([...resources, value]);
   };
 
   const handleFileSelect = (fileUri) => {
-    if (!resources.includes(fileUri)) {
+    if (!resources.some(r => r === fileUri)) {
       handleResourcesChange([...resources, fileUri]);
     }
   };
 
-  const removeResource = (resourceToRemove) => {
-    handleResourcesChange(resources.filter(r => r !== resourceToRemove));
+  const removeResource = (index) => {
+    handleResourcesChange(resources.filter((_, i) => i !== index));
   };
 
-  // Categorize resources for display
-  const steeringResources = resources.filter(r => r === STEERING_GLOB || r.startsWith(steeringPrefix));
-  const skillResources = resources.filter(r => r === SKILLS_GLOB || r.startsWith(skillPrefix));
-  const otherResources = resources.filter(r =>
-    r !== STEERING_GLOB && !r.startsWith(steeringPrefix) &&
-    r !== SKILLS_GLOB && !r.startsWith(skillPrefix)
+  // Categorize resources for display — only string resources can be categorized
+  const stringResources = resources.map((r, i) => ({ value: r, index: i, isString: typeof r === 'string' }));
+  const steeringResources = stringResources.filter(r => r.isString && (r.value === STEERING_GLOB || r.value.startsWith(steeringPrefix)));
+  const skillResources = stringResources.filter(r => r.isString && (r.value === SKILLS_GLOB || r.value.startsWith(skillPrefix)));
+  const otherResources = stringResources.filter(r => r.isString &&
+    r.value !== STEERING_GLOB && !r.value.startsWith(steeringPrefix) &&
+    r.value !== SKILLS_GLOB && !r.value.startsWith(skillPrefix)
   );
+  const objectResources = stringResources.filter(r => !r.isString);
 
   const getDisplayName = (resource) => {
+    if (typeof resource !== 'string') {
+      return resource.name || resource.type || 'Object resource';
+    }
     if (resource === STEERING_GLOB) return 'All Steering Files';
     if (resource === SKILLS_GLOB) return 'All Skills';
     if (resource.startsWith(steeringPrefix)) return resource.slice(steeringPrefix.length);
@@ -175,11 +180,11 @@ const ResourcesCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
 
               {steeringResources.length > 0 && (
                 <List dense sx={{ mt: 1 }}>
-                  {steeringResources.map((resource, i) => (
-                    <ListItem key={i} sx={{ px: 0, py: 0.25 }}>
-                      <ListItemText primary={getDisplayName(resource)} primaryTypographyProps={{ variant: 'body2' }} secondary={resource} secondaryTypographyProps={{ variant: 'caption', sx: { wordBreak: 'break-all' } }} />
+                  {steeringResources.map((r) => (
+                    <ListItem key={r.index} sx={{ px: 0, py: 0.25 }}>
+                      <ListItemText primary={getDisplayName(r.value)} primaryTypographyProps={{ variant: 'body2' }} secondary={r.value} secondaryTypographyProps={{ variant: 'caption', sx: { wordBreak: 'break-all' } }} />
                       <ListItemSecondaryAction>
-                        <IconButton edge="end" onClick={() => removeResource(resource)} size="small" color="error">
+                        <IconButton edge="end" onClick={() => removeResource(r.index)} size="small" color="error">
                           <Delete fontSize="small" />
                         </IconButton>
                       </ListItemSecondaryAction>
@@ -219,11 +224,11 @@ const ResourcesCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
 
               {skillResources.length > 0 && (
                 <List dense sx={{ mt: 1 }}>
-                  {skillResources.map((resource, i) => (
-                    <ListItem key={i} sx={{ px: 0, py: 0.25 }}>
-                      <ListItemText primary={getDisplayName(resource)} primaryTypographyProps={{ variant: 'body2' }} secondary={resource} secondaryTypographyProps={{ variant: 'caption', sx: { wordBreak: 'break-all' } }} />
+                  {skillResources.map((r) => (
+                    <ListItem key={r.index} sx={{ px: 0, py: 0.25 }}>
+                      <ListItemText primary={getDisplayName(r.value)} primaryTypographyProps={{ variant: 'body2' }} secondary={r.value} secondaryTypographyProps={{ variant: 'caption', sx: { wordBreak: 'break-all' } }} />
                       <ListItemSecondaryAction>
-                        <IconButton edge="end" onClick={() => removeResource(resource)} size="small" color="error">
+                        <IconButton edge="end" onClick={() => removeResource(r.index)} size="small" color="error">
                           <Delete fontSize="small" />
                         </IconButton>
                       </ListItemSecondaryAction>
@@ -257,17 +262,40 @@ const ResourcesCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => {
 
             {otherResources.length > 0 && (
               <List dense>
-                {otherResources.map((resource, index) => (
-                  <ListItem key={index} sx={{ px: 0 }}>
-                    <ListItemText primary={resource} secondary={resource.includes('*') ? 'Pattern' : 'Specific file'} />
+                {otherResources.map((r) => (
+                  <ListItem key={r.index} sx={{ px: 0 }}>
+                    <ListItemText primary={r.value} secondary={r.value.includes('*') ? 'Pattern' : 'Specific file'} />
                     <ListItemSecondaryAction>
-                      <IconButton edge="end" onClick={() => removeResource(resource)} size="small" color="error">
+                      <IconButton edge="end" onClick={() => removeResource(r.index)} size="small" color="error">
                         <Delete fontSize="small" />
                       </IconButton>
                     </ListItemSecondaryAction>
                   </ListItem>
                 ))}
               </List>
+            )}
+
+            {/* Object Resources (e.g. knowledgeBase) */}
+            {objectResources.length > 0 && (
+              <Box sx={{ mt: 1 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>Knowledge Base Resources</Typography>
+                <List dense>
+                  {objectResources.map((r) => (
+                    <ListItem key={r.index} sx={{ px: 0 }}>
+                      <ListItemText
+                        primary={getDisplayName(r.value)}
+                        secondary={JSON.stringify(r.value, null, 0).slice(0, 100) + '...'}
+                        secondaryTypographyProps={{ variant: 'caption', sx: { wordBreak: 'break-all' } }}
+                      />
+                      <ListItemSecondaryAction>
+                        <IconButton edge="end" onClick={() => removeResource(r.index)} size="small" color="error">
+                          <Delete fontSize="small" />
+                        </IconButton>
+                      </ListItemSecondaryAction>
+                    </ListItem>
+                  ))}
+                </List>
+              </Box>
             )}
           </Box>
         </CardContent>

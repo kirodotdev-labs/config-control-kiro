@@ -144,8 +144,10 @@ func (s *DashboardService) GetSetupStatus() (*SetupStatusResponse, error) {
 		// Check resources for file://, steering, skill://
 		for _, r := range agent.Resources {
 			agentHasResources = true
-			if strings.Contains(r, "steering") { agentHasSteering = true }
-			if strings.HasPrefix(r, "skill://") { agentHasSkillRes = true }
+			if rs, ok := r.(string); ok {
+				if strings.Contains(rs, "steering") { agentHasSteering = true }
+				if strings.HasPrefix(rs, "skill://") { agentHasSkillRes = true }
+			}
 		}
 	}
 
@@ -716,9 +718,11 @@ func (s *DashboardService) GetAgentsWithStats() (*AgentsResponse, error) {
 		// Check if steering is enabled (has file://.kiro/steering/**/*.md in resources)
 		stats.SteeringEnabled = false
 		for _, resource := range agent.Resources {
-			if strings.Contains(resource, "file://.kiro/steering/") {
-				stats.SteeringEnabled = true
-				break
+			if rs, ok := resource.(string); ok {
+				if strings.Contains(rs, "file://.kiro/steering/") {
+					stats.SteeringEnabled = true
+					break
+				}
 			}
 		}
 

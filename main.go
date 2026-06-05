@@ -60,7 +60,7 @@ func main() {
 	mcpService := mcp.NewMCPService(kiroService, logger)
 	
 	mcpHandler := mcp.NewHandler(mcpService)
-	agentService := agent.NewAgentService(kiroService)
+	agentService := agent.NewAgentService(kiroService, logger)
 	agentHandler := agent.NewHandler(agentService)
 	fileService := file.NewFileService(logger)
 	fileHandler := file.NewHandler(fileService)

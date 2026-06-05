@@ -11,7 +11,8 @@ import {
   CardContent,
   Chip,
   Menu,
-  MenuItem
+  MenuItem,
+  CircularProgress
 } from '@mui/material';
 import {
   MoreVert,
@@ -25,6 +26,7 @@ const AgentMCPServerList = ({
   onServerRemove,
   onServerEdit,
   serverTools = {},
+  loadingTools = {},
   disabledTools = {},
   onToolToggle,
   onHighlightJson
@@ -111,7 +113,13 @@ const AgentMCPServerList = ({
             </Box>
 
             {/* Tools chip - replaces server type text */}
-            {serverTools[server.name]?.length > 0 && (
+            {loadingTools[server.name] && (
+              <Box sx={{ mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CircularProgress size={14} />
+                <Typography variant="caption" color="text.secondary">Loading tools...</Typography>
+              </Box>
+            )}
+            {!loadingTools[server.name] && serverTools[server.name]?.length > 0 && (
               <Box sx={{ mb: 0.5 }}>
                 <Chip 
                   label={`${serverTools[server.name].length} tools ${expandedTools.has(server.name) ? '▲' : '▼'}`}
@@ -134,7 +142,7 @@ const AgentMCPServerList = ({
             )}
 
             {/* Tools List - shown when expanded */}
-            {serverTools[server.name]?.length > 0 && expandedTools.has(server.name) && (
+            {!loadingTools[server.name] && serverTools[server.name]?.length > 0 && expandedTools.has(server.name) && (
               <Box sx={{ mt: 1 }}>
                 {/* Enable/Disable All Tools Toggle */}
                 <Box sx={{ 

@@ -13,7 +13,8 @@ import {
   Chip,
   Menu,
   MenuItem,
-  Stack
+  Stack,
+  CircularProgress
 } from '@mui/material';
 import {
   Add,
@@ -34,6 +35,7 @@ const MCPServerList = ({
   onServerSelect, 
   selectedServer,
   serverTools = {},
+  loadingTools = {},
   disabledTools = {},
   onToolToggle
 }) => {
@@ -283,7 +285,13 @@ const MCPServerList = ({
                       {status.charAt(0).toUpperCase() + status.slice(1)}
                     </Typography>
                   )}
-                  {serverTools[server.name]?.length > 0 && (
+                  {loadingTools[server.name] && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <CircularProgress size={12} />
+                      <Typography variant="caption" color="text.secondary">Loading tools...</Typography>
+                    </Box>
+                  )}
+                  {!loadingTools[server.name] && serverTools[server.name]?.length > 0 && (
                     <Chip 
                       label={`${serverTools[server.name]?.length || 0} tools ${expandedTools.has(server.name) ? '▲' : '▼'}`}
                       size="small" 
@@ -305,7 +313,7 @@ const MCPServerList = ({
                 </Box>
 
                 {/* Tools List */}
-                {serverTools[server.name]?.length > 0 && expandedTools.has(server.name) && (
+                {!loadingTools[server.name] && serverTools[server.name]?.length > 0 && expandedTools.has(server.name) && (
                   <Box sx={{ mt: 1 }}>
                     {/* Enable/Disable All Tools Toggle */}
                     <Box sx={{ 

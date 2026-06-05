@@ -1,58 +1,113 @@
-# Contributing Guidelines
+# Contributing to Config Control for Kiro
 
-Thank you for your interest in contributing to our project. Whether it's a bug report, new feature, correction, or additional
-documentation, we greatly value feedback and contributions from our community.
+Thank you for your interest in contributing. We welcome bug reports, feature requests, documentation improvements, and code contributions.
 
-Please read through this document before submitting any issues or pull requests to ensure we have all the necessary
-information to effectively respond to your bug report or contribution.
+## Security Issue Notifications
 
+If you discover a potential security issue, notify AWS/Amazon Security via the [vulnerability reporting page](http://aws.amazon.com/security/vulnerability-reporting/). Please do **not** create a public GitHub issue.
 
-## Reporting Bugs/Feature Requests
+## Reporting Bugs / Feature Requests
 
-We welcome you to use the GitHub issue tracker to report bugs or suggest features.
+Use the [GitHub issue tracker](../../issues) to report bugs or suggest features. Before filing, check existing open or recently closed issues to avoid duplicates.
 
-When filing an issue, please check existing open, or recently closed, issues to make sure somebody else hasn't already
-reported the issue. Please try to include as much information as you can. Details like these are incredibly useful:
+For bug reports, include:
+- Steps to reproduce
+- Expected vs actual behavior
+- Version (`./cckiro --version` or check the dashboard)
+- Platform (Linux, macOS, Windows/WSL)
 
-* A reproducible test case or series of steps
-* The version of our code being used
-* Any modifications you've made relevant to the bug
-* Anything unusual about your environment or deployment
+## Contributing Code
 
+### Step 1: Open an Issue
 
-## Contributing via Pull Requests
-Contributions via pull requests are much appreciated. Before sending us a pull request, please ensure that:
+For anything beyond a trivial fix, [open an issue](../../issues/new) first to discuss the change. This avoids wasted effort on work that may not align with the project direction.
 
-1. You are working against the latest source on the *main* branch.
-2. You check existing open, and recently merged, pull requests to make sure someone else hasn't addressed the problem already.
-3. You open an issue to discuss any significant work - we would hate for your time to be wasted.
+### Step 2: Fork and Clone
 
-To send us a pull request, please:
+```bash
+# Fork the repo on GitHub, then:
+git clone https://github.com/YOUR_USERNAME/config-control-kiro.git
+cd config-control-kiro
+```
 
-1. Fork the repository.
-2. Modify the source; please focus on the specific change you are contributing. If you also reformat all the code, it will be hard for us to focus on your change.
-3. Ensure local tests pass.
-4. Commit to your fork using clear commit messages.
-5. Send us a pull request, answering any default questions in the pull request interface.
-6. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
+### Step 3: Create a Branch
 
-GitHub provides additional document on [forking a repository](https://help.github.com/articles/fork-a-repo/) and
-[creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
+Create a branch off `main` for your change:
 
+```bash
+git checkout -b feature/your-feature-name
+# or
+git checkout -b fix/your-bug-fix
+```
 
-## Finding contributions to work on
-Looking at the existing issues is a great way to find something to contribute on. As our projects, by default, use the default GitHub issue labels (enhancement/bug/duplicate/help wanted/invalid/question/wontfix), looking at any 'help wanted' issues is a great place to start.
+### Step 4: Make Your Changes
 
+Follow the project patterns:
+
+- **Go**: Each feature is a package in `internal/` with `service.go` (logic) and `handler.go` (HTTP routes). Shared utilities in `internal/shared/utils/`.
+- **React**: Pages in `client/src/pages/`, reusable components in `client/src/components/`, all API calls through `client/src/services/api.js`.
+- Godoc on all exported Go types and functions
+- JSDoc headers on all React files
+- No `console.log` — only `console.error` in catch blocks
+- Reuse existing shared components and hooks before creating new ones
+
+### Step 5: Test
+
+```bash
+make test     # Go tests — must pass
+make build    # Full build — must succeed
+make lint     # Go vet + React eslint
+```
+
+### Step 6: Commit and Push
+
+```bash
+git add .
+git commit -m "Add feature X"   # or "Fix: description of bug"
+git push origin feature/your-feature-name
+```
+
+### Step 7: Open a Pull Request
+
+Go to the original repo and open a PR from your fork's branch → `main`.
+
+In your PR description:
+- Describe what changed and why
+- Reference the issue: `Fixes #123`
+- Note any new dependencies or breaking changes
+
+### PR Review
+
+- A maintainer will review your PR
+- Address any requested changes by pushing new commits to your branch
+- Once approved, your PR will be squash-merged into `main`
+
+### PR Checklist
+
+- [ ] `make test` passes
+- [ ] `make build` succeeds
+- [ ] Tests added for new code
+- [ ] Follows existing handler/service pattern (Go) or pages/components pattern (React)
+- [ ] Godoc/JSDoc present
+- [ ] No `console.log`, no commented-out code, no unused imports
+
+## Development Setup
+
+Requires Go 1.22+ and Node.js 18+.
+
+```bash
+make dev      # Frontend hot-reload + Go backend
+make build    # Production build
+make test     # Run all Go tests
+make lint     # Linting
+make clean    # Remove build artifacts
+```
 
 ## Code of Conduct
+
 This project has adopted the [Amazon Open Source Code of Conduct](https://aws.github.io/code-of-conduct).
 For more information see the [Code of Conduct FAQ](https://aws.github.io/code-of-conduct-faq) or contact
 opensource-codeofconduct@amazon.com with any additional questions or comments.
-
-
-## Security issue notifications
-If you discover a potential security issue in this project we ask that you notify AWS/Amazon Security via our [vulnerability reporting page](http://aws.amazon.com/security/vulnerability-reporting/). Please do **not** create a public github issue.
-
 
 ## Licensing
 

@@ -9,9 +9,9 @@ type Agent struct {
 	Model            string      `json:"model,omitempty"`
 	Description      string      `json:"description,omitempty"`
 	Prompt           string      `json:"prompt,omitempty"`
-	Tools            []string    `json:"tools,omitempty"`
-	AllowedTools     []string    `json:"allowedTools,omitempty"`
-	Resources        []string    `json:"resources,omitempty"`
+	Tools            []interface{} `json:"tools,omitempty"`
+	AllowedTools     []interface{} `json:"allowedTools,omitempty"`
+	Resources        []interface{} `json:"resources,omitempty"`
 	MCPServers       interface{} `json:"mcpServers,omitempty"`
 	Hooks            interface{} `json:"hooks,omitempty"`
 	ToolAliases      interface{} `json:"toolAliases,omitempty"`

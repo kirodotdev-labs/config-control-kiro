@@ -39,6 +39,7 @@ const McpServersCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => 
   const [newServerValid, setNewServerValid] = useState(null);
   const [newServerError, setNewServerError] = useState('');
   const [serverTools, setServerTools] = useState({});
+  const [loadingTools, setLoadingTools] = useState({});
   const [disabledTools, setDisabledTools] = useState({});
   const saveTimeoutRef = useRef(null);
   const [globalServers, setGlobalServers] = useState({});
@@ -83,6 +84,13 @@ const McpServersCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => 
     try {
       const servers = agent.mcpServers;
       const results = {};
+      // Set all enabled servers as loading
+      const loading = {};
+      Object.entries(servers).forEach(([name, cfg]) => {
+        if (!cfg.disabled) loading[name] = true;
+      });
+      setLoadingTools(loading);
+
       await Promise.allSettled(
         Object.entries(servers).map(async ([name, cfg]) => {
           if (cfg.disabled) return;
@@ -92,12 +100,15 @@ const McpServersCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => 
           } catch (err) {
             console.error(`Failed to load tools for ${name}:`, err);
             results[name] = [];
+          } finally {
+            setLoadingTools(prev => ({ ...prev, [name]: false }));
           }
         })
       );
       setServerTools(results);
     } catch (error) {
       console.error('Failed to load MCP tools:', error);
+      setLoadingTools({});
     }
   };
 
@@ -408,6 +419,7 @@ const McpServersCard = ({ agent, onAgentChange, onHighlightJson, isActive }) => 
                 onServerRemove={handleDeleteServer}
                 onServerEdit={handleEditServer}
                 serverTools={serverTools}
+                loadingTools={loadingTools}
                 disabledTools={disabledTools}
                 onToolToggle={handleToolToggle}
                 onHighlightJson={onHighlightJson}
