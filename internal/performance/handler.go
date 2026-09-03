@@ -55,8 +55,8 @@ func (h *Handler) GetRecent(w http.ResponseWriter, r *http.Request) {
 
 
 // GetKiroUsage handles GET /api/performance/kiro-usage.
-// Shells out to `kiro-cli chat --no-interactive "/usage"` (cached for 60s)
-// and returns the parsed plan-and-credits snapshot.
+// Fetches live from `kiro-cli chat --no-interactive "/usage"` on each request
+// (no caching) and returns the parsed plan-and-credits snapshot.
 func (h *Handler) GetKiroUsage(w http.ResponseWriter, r *http.Request) {
 	usage, err := h.service.ReadKiroUsage()
 	if err != nil {

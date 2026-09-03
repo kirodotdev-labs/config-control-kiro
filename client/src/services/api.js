@@ -240,7 +240,7 @@ export const getPerformanceRecent = async (window = '24h', limit = 200) => {
   return response.data;
 };
 
-/** @returns {Promise<Object>} Plan and credits snapshot via kiro-cli /usage */
+/** @returns {Promise<Object>} Plan and credits snapshot via kiro-cli /usage (live, no cache) */
 export const getKiroUsage = async () => {
   const response = await api.get('/performance/kiro-usage');
   return response.data;

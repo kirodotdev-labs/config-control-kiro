@@ -740,10 +740,9 @@ function Dashboard() {
       </Grid>
 
       {/* Performance */}
-      <Typography variant="h6" gutterBottom sx={{ mt: 4, mb: 2 }}>
-        Performance
-      </Typography>
-      <PerformanceSection />
+      <Box sx={{ mt: 4 }}>
+        <PerformanceSection />
+      </Box>
 
       <LaunchDialog
         open={updateDialog}

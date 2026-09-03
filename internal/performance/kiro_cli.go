@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -29,58 +28,23 @@ type KiroUsage struct {
 	Raw          string  `json:"raw"`
 }
 
-// kiroUsageTTL is how long a successful usage read is cached in memory
-// before another shell-out is triggered. Usage changes slowly (billing is
-// cycle-based) and the shell-out is slow (~5s), so this is a large
-// window on purpose.
-const kiroUsageTTL = 60 * time.Second
-
 // kiroUsageTimeout bounds how long we wait for kiro-cli to respond.
 // The startup cost includes MCP-server discovery and duplicate-agent
 // warnings; 45s is comfortably above the observed p95 (~10s).
 const kiroUsageTimeout = 45 * time.Second
 
-// usageCache is process-local memoisation for ReadKiroUsage. Concurrent
-// readers block behind the mutex while a fetch is in flight.
-type usageCache struct {
-	mu    sync.Mutex
-	data  *KiroUsage
-	at    time.Time
-	err   error
-	errAt time.Time
-}
-
-var kiroUsageCache usageCache
-
-// ReadKiroUsage returns the current plan and credit picture by shelling
-// out to `kiro-cli chat --no-interactive "/usage"`. The result is cached
-// in memory for kiroUsageTTL to keep the Performance page responsive.
-// Errors are also cached (for a shorter window) so an unauthenticated
-// or missing binary does not turn every page load into a slow timeout.
+// ReadKiroUsage fetches the current plan and credit picture by shelling out
+// to `kiro-cli chat --no-interactive "/usage"`. There is no caching: every
+// call fetches live. On failure it returns the error so the UI can prompt
+// the user to log in and try again via the Refresh button.
 func (s *Service) ReadKiroUsage() (*KiroUsage, error) {
-	kiroUsageCache.mu.Lock()
-	defer kiroUsageCache.mu.Unlock()
-
-	now := time.Now()
-	if kiroUsageCache.data != nil && now.Sub(kiroUsageCache.at) < kiroUsageTTL {
-		return kiroUsageCache.data, nil
-	}
-	if kiroUsageCache.err != nil && now.Sub(kiroUsageCache.errAt) < 5*time.Second {
-		return nil, kiroUsageCache.err
-	}
-
-	data, err := s.fetchKiroUsage()
+	u, err := s.fetchKiroUsage()
 	if err != nil {
-		kiroUsageCache.err = err
-		kiroUsageCache.errAt = now
 		s.logger.Warn("performance: kiro-cli usage fetch failed: %v", err)
 		return nil, err
 	}
-	data.FetchedAt = now.Unix()
-	kiroUsageCache.data = data
-	kiroUsageCache.at = now
-	kiroUsageCache.err = nil
-	return data, nil
+	u.FetchedAt = time.Now().Unix()
+	return u, nil
 }
 
 // fetchKiroUsage does the actual shell-out and parse. It has no

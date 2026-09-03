@@ -13,7 +13,9 @@ import {
   Chip,
   Alert,
   Skeleton,
+  useTheme,
 } from '@mui/material';
+import { RAINBOW_GRADIENT } from './colors';
 
 /**
  * @param {Object} props
@@ -22,11 +24,14 @@ import {
  * @param {?Object} props.error
  */
 const PlanUsageCard = ({ usage, loading, error }) => {
+  const theme = useTheme();
+
   if (error) {
     return (
       <Alert severity="warning" variant="outlined">
         Plan usage unavailable: {error.message || 'unknown error'}.
-        Verify with <code>kiro-cli chat "/usage"</code> or run <code>kiro-cli login</code>.
+        Make sure you are logged in — run <code>kiro-cli login</code> (or verify
+        with <code>kiro-cli chat "/usage"</code>), then click <strong>Refresh</strong> above.
       </Alert>
     );
   }
@@ -46,7 +51,6 @@ const PlanUsageCard = ({ usage, loading, error }) => {
   const percent = Math.max(0, usage.percent || 0);
   const barValue = Math.min(percent, 100);
   const overLimit = percent > 100;
-  const color = overLimit ? 'error' : percent >= 90 ? 'warning' : 'primary';
 
   const usedLabel = usage.hasLimit
     ? `${usage.used.toLocaleString(undefined, { maximumFractionDigits: 2 })} of ${usage.limit.toLocaleString()} ${usage.metric.toLowerCase()}`
@@ -90,8 +94,20 @@ const PlanUsageCard = ({ usage, loading, error }) => {
           <LinearProgress
             variant="determinate"
             value={barValue}
-            color={color}
-            sx={{ height: 8, borderRadius: 1 }}
+            sx={{
+              height: 8,
+              borderRadius: 1,
+              backgroundColor: 'action.hover',
+              '& .MuiLinearProgress-bar': {
+                borderRadius: 1,
+                // Rainbow fill, matching the "Features Utilized" card. Over the
+                // allowance the bar turns solid red so the breach still reads
+                // as a warning rather than decoration.
+                background: overLimit
+                  ? theme.palette.error.main
+                  : RAINBOW_GRADIENT,
+              },
+            }}
           />
         )}
 
