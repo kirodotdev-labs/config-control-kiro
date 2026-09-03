@@ -28,6 +28,7 @@ import (
 	"kiromanager/internal/fileexplorer"
 	"kiromanager/internal/launcher"
 	"kiromanager/internal/mcp"
+	"kiromanager/internal/performance"
 	"kiromanager/internal/shared/utils"
 	"kiromanager/internal/skills"
 	"kiromanager/internal/changelog"
@@ -76,12 +77,14 @@ func main() {
 	launcherHandler := launcher.NewHandler(launcherService)
 	changelogService := changelog.NewService(logger, kiroService)
 	changelogHandler := changelog.NewHandler(changelogService)
+	performanceService := performance.NewService(kiroService, logger)
+	performanceHandler := performance.NewHandler(performanceService)
 
 	// Generate auth token
 	authToken := generateToken()
 
 	// Setup router
-	router := setupRouter(systemHandler, mcpHandler, agentHandler, fileHandler, fileExplorerHandler, dashboardHandler, steeringHandler, skillsHandler, launcherHandler, changelogHandler, logger, authToken)
+	router := setupRouter(systemHandler, mcpHandler, agentHandler, fileHandler, fileExplorerHandler, dashboardHandler, steeringHandler, skillsHandler, launcherHandler, changelogHandler, performanceHandler, logger, authToken)
 
 	// Find available port
 	port := findAvailablePort(defaultPort)
@@ -136,7 +139,7 @@ func main() {
 }
 
 // setupRouter configures the mux router with all API routes, middleware, and static file serving.
-func setupRouter(systemHandler *system.Handler, mcpHandler *mcp.Handler, agentHandler *agent.Handler, fileHandler *file.Handler, fileExplorerHandler *fileexplorer.Handler, dashboardHandler *dashboard.Handler, steeringHandler *steering.Handler, skillsHandler *skills.Handler, launcherHandler *launcher.Handler, changelogHandler *changelog.Handler, logger *utils.Logger, authToken string) *mux.Router {
+func setupRouter(systemHandler *system.Handler, mcpHandler *mcp.Handler, agentHandler *agent.Handler, fileHandler *file.Handler, fileExplorerHandler *fileexplorer.Handler, dashboardHandler *dashboard.Handler, steeringHandler *steering.Handler, skillsHandler *skills.Handler, launcherHandler *launcher.Handler, changelogHandler *changelog.Handler, performanceHandler *performance.Handler, logger *utils.Logger, authToken string) *mux.Router {
 	router := mux.NewRouter()
 
 	// Security middleware for API routes only
@@ -205,6 +208,11 @@ func setupRouter(systemHandler *system.Handler, mcpHandler *mcp.Handler, agentHa
 
 	// Changelog routes
 	api.HandleFunc("/changelog", changelogHandler.GetChangelog).Methods("GET")
+
+	// Performance routes
+	api.HandleFunc("/performance/summary", performanceHandler.GetSummary).Methods("GET")
+	api.HandleFunc("/performance/recent", performanceHandler.GetRecent).Methods("GET")
+	api.HandleFunc("/performance/kiro-usage", performanceHandler.GetKiroUsage).Methods("GET")
 
 	// Steering routes
 	api.HandleFunc("/steering/files", steeringHandler.GetFiles).Methods("GET")

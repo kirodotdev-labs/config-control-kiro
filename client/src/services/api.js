@@ -228,4 +228,22 @@ export const resolvePath = async (path) => {
   return response.data;
 };
 
+/** @returns {Promise<Object>} Kiro CLI usage summary for the given window */
+export const getPerformanceSummary = async (window = '24h') => {
+  const response = await api.get('/performance/summary', { params: { window } });
+  return response.data;
+};
+
+/** @returns {Promise<Object>} Recent Kiro CLI assistant turns, newest first */
+export const getPerformanceRecent = async (window = '24h', limit = 200) => {
+  const response = await api.get('/performance/recent', { params: { window, limit } });
+  return response.data;
+};
+
+/** @returns {Promise<Object>} Plan and credits snapshot via kiro-cli /usage (live, no cache) */
+export const getKiroUsage = async () => {
+  const response = await api.get('/performance/kiro-usage');
+  return response.data;
+};
+
 export default api;

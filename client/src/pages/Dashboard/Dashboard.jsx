@@ -31,6 +31,7 @@ import {
 } from '@mui/icons-material';
 import { getSetupStatus, getSystemInfo, getKiroStatus, getDashboardCounts, getChangelog } from '../../services/api';
 import LaunchDialog from '../../components/Launcher/LaunchDialog';
+import PerformanceSection from '../../components/Performance/PerformanceSection';
 
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 
@@ -737,6 +738,11 @@ function Dashboard() {
           </Card>
         </Grid>
       </Grid>
+
+      {/* Performance */}
+      <Box sx={{ mt: 4 }}>
+        <PerformanceSection />
+      </Box>
 
       <LaunchDialog
         open={updateDialog}
