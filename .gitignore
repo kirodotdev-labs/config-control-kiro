@@ -42,3 +42,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Local signing identifiers (see build/sign-binaries.sh); never committed
+build/signing.env

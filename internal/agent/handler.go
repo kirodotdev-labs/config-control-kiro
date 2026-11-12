@@ -1,108 +1,126 @@
 package agent
 
 import (
-	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/mux"
-	"kiromanager/internal/models"
+	"kiromanager/internal/shared/ordered"
 	"kiromanager/internal/shared/utils"
 )
 
-// Handler exposes HTTP endpoints for agent CRUD operations.
+// Handler exposes agent specs over HTTP.
 type Handler struct {
 	service *AgentService
 }
 
-// NewHandler creates a Handler backed by the given AgentService.
+// NewHandler creates a Handler backed by service.
 func NewHandler(service *AgentService) *Handler {
 	return &Handler{service: service}
 }
 
-// GetAgents handles GET requests and returns all agents.
+// GetAgents handles GET /agents: summaries of every agent in the active scope.
 func (h *Handler) GetAgents(w http.ResponseWriter, r *http.Request) {
-	agents, err := h.service.GetAllAgents()
-	if err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-	utils.RespondJSON(w, http.StatusOK, agents)
+	utils.RespondJSON(w, http.StatusOK, h.service.List())
 }
 
-// GetAllAgentNames handles GET requests and returns all agent names.
+// GetAllAgentNames handles GET /agents/all-names: ids across scope and global.
 func (h *Handler) GetAllAgentNames(w http.ResponseWriter, r *http.Request) {
-	names := h.service.GetAllAgentNames()
-	utils.RespondJSON(w, http.StatusOK, names)
+	utils.RespondJSON(w, http.StatusOK, h.service.AllNames())
 }
 
-// GetAgent handles GET requests for a single agent by name.
+// GetAgent handles GET /agents/{name}: the full spec, fields in file order.
 func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	name := utils.SanitizeName(vars["name"])
-
-	agent, err := h.service.GetAgent(name)
+	spec, err := h.service.Get(r.PathValue("name"))
 	if err != nil {
-		utils.RespondError(w, utils.NewAppError(err.Error(), 404, "AGENT_NOT_FOUND"))
+		utils.RespondError(w, err)
 		return
 	}
-	utils.RespondJSON(w, http.StatusOK, agent)
+	utils.RespondJSON(w, http.StatusOK, spec)
 }
 
-// CreateAgent handles POST requests to create a new agent.
+// CreateAgent handles POST /agents with a new spec; responds with its id.
 func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
-	var agent models.Agent
-	json.NewDecoder(r.Body).Decode(&agent)
-
-	if err := h.service.CreateAgent(&agent); err != nil {
+	spec := ordered.New()
+	if !utils.DecodeJSON(w, r, spec) {
+		return
+	}
+	id, err := h.service.Create(spec)
+	if err != nil {
 		utils.RespondError(w, err)
 		return
 	}
-	utils.RespondJSON(w, http.StatusOK, agent)
+	utils.RespondJSON(w, http.StatusCreated, map[string]string{"id": id})
 }
 
-// UpdateAgent handles PUT requests to update an existing agent by name.
+// UpdateAgent handles PUT /agents/{name} with the complete edited spec.
 func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	name := utils.SanitizeName(vars["name"])
-
-	var agent models.Agent
-	json.NewDecoder(r.Body).Decode(&agent)
-
-	if err := h.service.UpdateAgent(name, &agent); err != nil {
+	spec := ordered.New()
+	if !utils.DecodeJSON(w, r, spec) {
+		return
+	}
+	if err := h.service.Update(r.PathValue("name"), spec); err != nil {
 		utils.RespondError(w, err)
 		return
 	}
-	utils.RespondJSON(w, http.StatusOK, agent)
+	utils.RespondJSON(w, http.StatusOK, spec)
 }
 
-// DeleteAgent handles DELETE requests to remove an agent by name.
+// DeleteAgent handles DELETE /agents/{name}.
 func (h *Handler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	name := utils.SanitizeName(vars["name"])
-
-	if err := h.service.DeleteAgent(name); err != nil {
+	if err := h.service.Delete(r.PathValue("name")); err != nil {
 		utils.RespondError(w, err)
 		return
 	}
-	utils.RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Agent deleted successfully",
-	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// GetAgentConfig handles GET requests and returns the agent configuration.
-func (h *Handler) GetAgentConfig(w http.ResponseWriter, r *http.Request) {
-	utils.RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"data": map[string]interface{}{
-			"agents": map[string]interface{}{},
-		},
-	})
+// GetRelations handles GET /relations?id=<navigator id>: what that item is
+// connected to (an agent's files, or the agents using a file).
+func (h *Handler) GetRelations(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		utils.RespondError(w, utils.BadRequest("id is required", "INVALID_REQUEST"))
+		return
+	}
+	utils.RespondJSON(w, http.StatusOK, h.service.Relations(id))
 }
 
-// SaveAgentConfig handles POST requests to save agent configuration.
-func (h *Handler) SaveAgentConfig(w http.ResponseWriter, r *http.Request) {
-	utils.RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Agent configuration saved",
-	})
+// MeasureServers handles POST /agents/{name}/measure: lists the tools of the
+// agent's MCP servers whose size isn't known yet, so its context can be shown.
+func (h *Handler) MeasureServers(w http.ResponseWriter, r *http.Request) {
+	out, err := h.service.MeasureServers(r.PathValue("name"))
+	if err != nil {
+		utils.RespondError(w, err)
+		return
+	}
+	utils.RespondJSON(w, http.StatusOK, out)
+}
+
+// GetServerTools handles GET /agents/{name}/server-tools: the measured tools
+// of the agent's MCP servers, by server.
+func (h *Handler) GetServerTools(w http.ResponseWriter, r *http.Request) {
+	out, err := h.service.ServerTools(r.PathValue("name"))
+	if err != nil {
+		utils.RespondError(w, err)
+		return
+	}
+	utils.RespondJSON(w, http.StatusOK, out)
+}
+
+// EstimateKnowledge handles POST /knowledge/estimate with {folder, include,
+// exclude}: how many files an agent knowledge base would cover.
+func (h *Handler) EstimateKnowledge(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Folder  string   `json:"folder"`
+		Include []string `json:"include"`
+		Exclude []string `json:"exclude"`
+	}
+	if !utils.DecodeJSON(w, r, &req) {
+		return
+	}
+	est, err := EstimateFolder(req.Folder, req.Include, req.Exclude)
+	if err != nil {
+		utils.RespondError(w, err)
+		return
+	}
+	utils.RespondJSON(w, http.StatusOK, est)
 }

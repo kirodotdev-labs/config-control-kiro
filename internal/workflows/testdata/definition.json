@@ -1,0 +1,20 @@
+{
+  "name": "investigate",
+  "description": "Single-step read-only investigation. The orchestrator supplies a self-contained brief; a planner agent investigates and writes a findings report.",
+  "inputs": {
+    "brief": "prompt",
+    "report_path": "file"
+  },
+  "steps": [
+    {
+      "type": "step",
+      "id": "investigate",
+      "agent": "wf-planner",
+      "prompt": "You are running a READ-ONLY investigation. Do not edit code, commit, or restart any server.\n\nYour process cwd is the parent session's primary workspace folder. Use ABSOLUTE paths for every file operat",
+      "artifacts": {
+        "report": "{{report_path}}"
+      }
+    }
+  ],
+  "planRevision": 0
+}

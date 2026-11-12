@@ -1,75 +1,12 @@
 # Config Control for Kiro
 
-> Unleash the full potential of Kiro CLI. Explore, build, and configure agents, MCP servers, steering files, and skills — all at your fingertips through an interactive UI.
+> A local app for configuring Kiro CLI: agents, MCP servers, powers, permissions, sandbox, hooks, steering, skills, prompts, memory, specs, workflows, code intelligence, settings, Kiroignore, ACP, and chats and usage, for Global and for each Workspace.
 
-https://github.com/user-attachments/assets/1e74c248-07f1-482a-a6d5-6c0ecb9c7bec
+https://github.com/user-attachments/assets/e8b1988c-e50e-4094-91cf-59050fb7a3f0
 
-## What It Does
+## What It Does and Who It's For
 
-**Click each feature below to see it in action.**
-
-- **Dashboard** — See your setup at a glance — how many agents, servers, steering files, and skills you have configured, with a feature adoption checklist.
-
-<details>
-<summary>▶️ See Dashboard in action</summary>
-
-https://github.com/user-attachments/assets/b432c09c-114e-4592-a5ca-d8d0682b71b8
-
-</details>
-
-- **Agents** — Create and configure Kiro agents with a visual editor. Set prompts, tools, models, hooks, keyboard shortcuts, and MCP server bindings. Edit the JSON directly or use the config cards — both stay in sync.
-
-<details>
-<summary>▶️ See Agents in action</summary>
-
-https://github.com/user-attachments/assets/4706368a-ea93-40e3-80da-98c831724b57
-
-</details>
-
-- **MCP Servers** — Add, remove, enable/disable MCP servers. Test tool connectivity. Toggle individual tools on/off per server.
-
-<details>
-<summary>▶️ See MCP Servers in action</summary>
-
-https://github.com/user-attachments/assets/e6c504da-0c8f-460c-8419-7d5b0ce071fd
-
-</details>
-
-- **Steering** — Create and edit steering markdown files with a built-in file tree and editor.
-
-<details>
-<summary>▶️ See Steering in action</summary>
-
-https://github.com/user-attachments/assets/84dcbf27-8648-4d4c-b8cd-5f66dc7dc6c7
-
-</details>
-
-- **Skills** — Browse, create, and edit skill folders and SKILL.md files.
-
-<details>
-<summary>▶️ See Skills in action</summary>
-
-https://github.com/user-attachments/assets/34d5417c-158a-406d-aa74-9260d408ac57
-
-</details>
-
-- **Workspaces** — Switch between global (`~/.kiro`) and project-level (`.kiro/`) configurations.
-
-<details>
-<summary>▶️ See Workspaces in action</summary>
-
-https://github.com/user-attachments/assets/15224882-37d4-4b60-9d99-df68b8b3fe9f
-
-</details>
-
-- **Changelog** — View Kiro CLI release history and check for updates.
-
-<details>
-<summary>▶️ See Changelog in action</summary>
-
-https://github.com/user-attachments/assets/557014c1-45ad-49aa-bbcd-658ca4f69cb3
-
-</details>
+Config Control for Kiro is for anyone who uses Kiro CLI or sets up their Kiro experience. Create custom agents and upgrade older ones to Kiro CLI V3, connect MCP servers, install and build powers, and teach Kiro your way of working with steering, skills, prompts and memory. Set what Kiro may do with permissions and the sandbox, plan work with specs and workflows, set up code intelligence, follow your chat sessions and credit usage, and open a Kiro chat in one click to try it all, in one simple app instead of config files. Every file Kiro uses is at your fingertips, so you can find a setting fast, adjust it in seconds and get back to what matters: using Kiro's full AI suite.
 
 ## Quick Start
 
@@ -199,7 +136,7 @@ Use `--no-browser` to start without opening a browser.
 
 ### Build From Source
 
-Requires Go 1.22+ and Node.js 18+.
+Requires Go 1.25+ and Node.js 22+.
 
 ```bash
 make build    # builds frontend + Go binary
@@ -210,7 +147,9 @@ Other commands:
 
 ```bash
 make dev      # frontend hot-reload + Go backend (for development)
-make test     # run all Go tests
+make test     # Go tests (race detector) + frontend domain tests
+make lint     # go vet, staticcheck, ESLint
+make freshness # outdated dependencies + npm audit
 make clean    # remove all build artifacts
 make release  # full pipeline: security checks + all platform binaries
 ```
@@ -231,28 +170,26 @@ graph LR
 ## Project Structure
 
 ```
-├── main.go                 # Entry point — HTTP server, routing, middleware
+├── main.go                  # Entry point: config, server start, graceful shutdown
 ├── internal/
-│   ├── system/             # Core config, workspace switching, system info
-│   ├── agent/              # Agent CRUD (reads/writes .kiro/agents/*.json)
-│   ├── mcp/                # MCP server config + stdio/HTTP tool clients
-│   ├── dashboard/          # Aggregated stats and setup status
-│   ├── steering/           # Steering file CRUD (.kiro/steering/*.md)
-│   ├── skills/             # Skills management (.kiro/skills/)
-│   ├── fileexplorer/       # File browser with copy/cut/paste/rename/delete
-│   ├── file/               # Simple file browsing and URI generation
-│   ├── launcher/           # Cross-platform terminal launcher
-│   ├── changelog/          # Kiro CLI changelog parser
-│   ├── models/             # Shared data structures
-│   └── shared/utils/       # Logger, errors, validation, file operations
-├── client/                 # React frontend (Vite + MUI)
-│   ├── src/pages/          # Dashboard, Agents, MCP, Steering, Skills, Changelog
-│   ├── src/components/     # Reusable UI components
-│   ├── src/services/       # API client (centralized axios)
-│   ├── src/hooks/          # Custom React hooks
-│   └── src/contexts/       # Workspace, clipboard, unsaved changes
-├── build/                  # Build scripts and pipeline
-└── Makefile                # Build commands
+│   ├── server/              # Routes, middleware (auth token, limits, headers), SPA + CSP
+│   ├── system/              # Active scope, surface tree, models, system info, update check
+│   ├── agent/               # Agent specs (.json/.md), order-preserving read/write
+│   ├── mcp/                 # mcp.json and live tool discovery (stdio + HTTP clients)
+│   ├── permissions/         # permissions.yaml rules
+│   ├── sandbox/             # settings/sandbox.json
+│   ├── fileexplorer/        # Read/write files, browse folders, resolve pasted paths
+│   ├── launcher/            # Opens a terminal running a validated kiro-cli command
+│   └── shared/              # ordered JSON, miniyaml, browser, utils
+├── client/src/
+│   ├── services/api.js      # The only network module
+│   ├── data/                # React Query hooks over the API
+│   ├── domain/              # Kiro V3 knowledge (tools, hooks, agents, MCP), unit-tested
+│   ├── ui/                  # House components (editor frame, sections, code editor, dialogs)
+│   ├── features/            # agents, mcp, hooks, permissions, sandbox, files, launcher, shell
+│   ├── hooks/ contexts/     # Draft/JSON-document state, scope, unsaved-changes guard
+├── build/                   # Release pipeline and signing scripts
+└── Makefile
 ```
 
 ## Resources

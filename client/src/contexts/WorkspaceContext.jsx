@@ -1,90 +1,63 @@
 /**
- * @fileoverview Workspace context for managing global vs workspace-scoped configuration.
+ * @fileoverview The active configuration scope: Global (~/.kiro) or one saved
+ * Workspace. Switching scope invalidates every cached query so each editor
+ * reloads from the new scope.
  */
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useQueryClient } from 'react-query';
-import { workspaceService } from '../services/api';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { workspaceApi } from '../services/api';
 
-const WorkspaceContext = createContext();
+const WorkspaceContext = createContext(null);
 
-/**
- * @param {Object} props
- * @param {React.ReactNode} props.children
- * @returns {JSX.Element} Workspace context provider
- */
+const EMPTY = { mode: 'global', activeWorkspace: '', workspaces: [], configPath: '' };
+
+/** @param {{children: React.ReactNode}} props */
 export function WorkspaceProvider({ children }) {
-  const [mode, setMode] = useState('global');
-  const [activeWorkspace, setActiveWorkspace] = useState('');
-  const [workspaces, setWorkspaces] = useState([]);
-  const [configPath, setConfigPath] = useState('~/.kiro');
+  const [state, setState] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const queryClient = useQueryClient();
 
-  const invalidateAll = () => queryClient.invalidateQueries();
+  const apply = useCallback((data) => setState((prev) => ({
+    mode: data.mode ?? prev.mode,
+    activeWorkspace: data.activeWorkspace ?? prev.activeWorkspace,
+    workspaces: data.workspaces ?? prev.workspaces,
+    configPath: data.configPath ?? prev.configPath,
+  })), []);
 
-  const applyData = (data) => {
-    if (data.mode !== undefined) setMode(data.mode);
-    if (data.activeWorkspace !== undefined) setActiveWorkspace(data.activeWorkspace || '');
-    if (data.workspaces) setWorkspaces(data.workspaces);
-    if (data.configPath) setConfigPath(data.configPath);
-  };
+  const reload = useCallback(async () => {
+    apply(await workspaceApi.context());
+    setLoading(false);
+  }, [apply]);
 
-  const refresh = useCallback(async () => {
-    try {
-      const data = await workspaceService.getContext();
-      applyData(data);
-    } catch (err) {
+  useEffect(() => {
+    reload().catch((err) => {
       console.error('Failed to load workspace context', err);
-    } finally {
       setLoading(false);
-    }
-  }, []);
+    });
+  }, [reload]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  const switchTo = useCallback(async (mode, path = '') => {
+    await workspaceApi.setContext(mode, path);
+    await reload();
+    await queryClient.invalidateQueries();
+  }, [reload, queryClient]);
 
-  const switchToGlobal = async () => {
-    const data = await workspaceService.setContext('global');
-    applyData(data);
-    const ctx = await workspaceService.getContext();
-    applyData(ctx);
-    invalidateAll();
-  };
+  const value = useMemo(() => ({
+    ...state,
+    loading,
+    isWorkspaceMode: state.mode === 'workspace' && !!state.activeWorkspace,
+    switchToGlobal: () => switchTo('global'),
+    switchToWorkspace: (path) => switchTo('workspace', path),
+    addWorkspace: async (path) => { apply(await workspaceApi.add(path)); },
+    removeWorkspace: async (path) => {
+      await workspaceApi.remove(path);
+      await reload();
+      await queryClient.invalidateQueries();
+    },
+  }), [state, loading, switchTo, apply, reload, queryClient]);
 
-  const switchToWorkspace = async (path) => {
-    const data = await workspaceService.setContext('workspace', path);
-    applyData(data);
-    const ctx = await workspaceService.getContext();
-    applyData(ctx);
-    invalidateAll();
-  };
-
-  const addWorkspace = async (path) => {
-    const data = await workspaceService.addWorkspace(path);
-    if (data.workspaces) setWorkspaces(data.workspaces);
-  };
-
-  const removeWorkspace = async (path) => {
-    const data = await workspaceService.removeWorkspace(path);
-    if (data.workspaces) setWorkspaces(data.workspaces);
-    if (data.mode) setMode(data.mode);
-    if (data.mode === 'global') setActiveWorkspace('');
-    const ctx = await workspaceService.getContext();
-    applyData(ctx);
-    invalidateAll();
-  };
-
-  const isWorkspaceMode = mode === 'workspace' && activeWorkspace !== '';
-
-  return (
-    <WorkspaceContext.Provider value={{
-      mode, activeWorkspace, workspaces, configPath, loading,
-      isWorkspaceMode, switchToGlobal, switchToWorkspace,
-      addWorkspace, removeWorkspace, refresh,
-    }}>
-      {children}
-    </WorkspaceContext.Provider>
-  );
+  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
 
-/** @returns {Object} Workspace state, mode, and switching functions */
+/** @returns {Object} scope state and switching functions. */
 export const useWorkspace = () => useContext(WorkspaceContext);

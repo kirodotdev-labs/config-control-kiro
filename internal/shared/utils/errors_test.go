@@ -77,4 +77,3 @@ func TestRespondError_GenericError(t *testing.T) {
 		t.Errorf("expected 'INTERNAL_ERROR', got %q", result["code"])
 	}
 }
-

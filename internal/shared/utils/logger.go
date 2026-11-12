@@ -113,11 +113,6 @@ func (l *Logger) log(level LogLevel, msg string) {
 	l.logger.Printf("%s %s", prefix[level], msg)
 }
 
-// Debug logs a message at DEBUG level.
-func (l *Logger) Debug(format string, args ...interface{}) {
-	l.log(DEBUG, fmt.Sprintf(format, args...))
-}
-
 // Info logs a message at INFO level.
 func (l *Logger) Info(format string, args ...interface{}) { l.log(INFO, fmt.Sprintf(format, args...)) }
 

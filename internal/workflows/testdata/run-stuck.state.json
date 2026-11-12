@@ -1,0 +1,32 @@
+{
+  "workflowId": "wf_98322c6ac7ea9edc",
+  "workflowName": "investigate",
+  "status": "paused",
+  "inputs": {
+    "brief": "Which agents are configured in this project's .kiro folder, what each one does, and how they hand work to each other. Cite the files.",
+    "report_path": ".kiro/reports/agents.md"
+  },
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+    "nodeId": "wf_98322c6ac7ea9edc",
+    "type": "sequence",
+    "status": "pending",
+    "children": [
+      {
+        "nodeId": "investigate",
+        "type": "step",
+        "status": "pending",
+        "agentName": "wf-planner"
+      }
+    ]
+  },
+  "parentSessionId": "sess_15b3e1ad-1b0a-43ad-8c12-45f707a985fd",
+  "backgroundExecution": false,
+  "rootConversationId": "sess_15b3e1ad-1b0a-43ad-8c12-45f707a985fd",
+  "workspacePath": "{{WS}}",
+  "createdAt": "2026-11-11T11:00:57.602Z",
+  "runLabel": "cckiro test 2: investigate agents",
+  "planRevision": 0,
+  "pauseReason": "Interrupted by agent restart; the previously running step was paused for resume."
+}

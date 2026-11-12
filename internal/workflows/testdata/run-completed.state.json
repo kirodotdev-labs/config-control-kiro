@@ -1,0 +1,50 @@
+{
+  "workflowId": "wf_f18b906fdb20b966",
+  "workflowName": "investigate",
+  "status": "completed",
+  "inputs": {
+    "brief": "Read-only investigation of the project at {{WS}}. Question: which agents are configured in this project's .kiro folder (look in {{WS}}/.kiro/agents/ and anywhere else under {{WS}}/.kiro such as steering, skills, workflows, hooks, settings), what each agent does (purpose, tools/permissions, model, pr",
+    "report_path": "{{WS}}/.kiro/reports/agents.md"
+  },
+  "artifacts": {
+    "report": "{{WS}}/.kiro/reports/agents.md"
+  },
+  "capturedOutputs": {
+    "investigate": "I wrote the report to `{{WS}}/.kiro/reports/agents.md`, with a file and line citation for each claim. Writing that file was the only change. I didn't open `secrets/` or run any agent.\n\nThe project has four agents, all in `.kiro/agents/`:\n\n| Agent | What it does | Can do | Loads |\n|---|---|---|---|\n|"
+  },
+  "root": {
+    "nodeId": "wf_f18b906fdb20b966",
+    "type": "sequence",
+    "status": "completed",
+    "children": [
+      {
+        "nodeId": "investigate",
+        "type": "step",
+        "status": "completed",
+        "agentName": "wf-planner",
+        "startedAt": "2026-11-11T11:15:49.420Z",
+        "sessionId": "sess_323539fd-9505-4a81-8870-f30396f4578c",
+        "completionSignal": "success",
+        "completionSignalSource": "send_message",
+        "capturedOutput": "I wrote the report to `{{WS}}/.kiro/reports/agents.md`, with a file and line citation for each claim. Writing that file was the only change. I didn't open `secrets/` or run any agent.\n\nThe project has four agents, all in `.kiro/agents/`:\n\n| Agent | What it does | Can do | Loads |\n|---|---|---|---|\n|",
+        "artifacts": {
+          "report": "{{WS}}/.kiro/reports/agents.md"
+        },
+        "endedAt": "2026-11-11T11:17:31.414Z"
+      }
+    ],
+    "startedAt": "2026-11-11T11:15:49.389Z",
+    "endedAt": "2026-11-11T11:17:31.429Z"
+  },
+  "createdAt": "2026-11-11T11:15:49.359Z",
+  "planRevision": 0,
+  "parentSessionId": "sess_316e4dd5-065e-450f-96c3-679c2e6004b8",
+  "runLabel": "investigate-kiro-agents",
+  "originalUserMessages": [
+    "Use a workflow: run the bundled investigate recipe in the background. Question: which agents are configured in this project's .kiro folder, what each one does, and how they hand work to each other. Read-only: do not change any project file. Save the cited report to .kiro/reports/agents.md. Tell me t"
+  ],
+  "rootConversationId": "sess_316e4dd5-065e-450f-96c3-679c2e6004b8",
+  "workspacePath": "{{WS}}",
+  "backgroundExecution": false,
+  "parentModelId": "auto"
+}

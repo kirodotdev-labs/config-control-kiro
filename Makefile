@@ -2,7 +2,7 @@ VERSION := $(shell cat build/VERSION)
 BINARY  := cckiro
 LDFLAGS := -s -w -X main.Version=$(VERSION)
 
-.PHONY: all dev build test clean frontend backend release lint help
+.PHONY: all dev build test clean frontend backend release lint freshness help
 
 ## help: Show this help message
 help:
@@ -15,14 +15,33 @@ dev:
 	@echo "Starting Go backend..."
 	go run .
 
-## test: Run all Go tests
+## test: Run Go tests (with the race detector) and frontend domain tests
+# The frontend tests import client packages (e.g. yaml), so install them first;
+# npm ci uses the lock file exactly, as on CI.
 test:
-	go test ./internal/... -count=1 -timeout 30s
+	go test -race ./internal/... ./tools/... -count=1 -timeout 120s
+	cd client && npm ci --silent --no-audit --no-fund && npm test
 
-## lint: Run Go vet and React lint
+## lint: Go vet + staticcheck, and ESLint for the frontend
+# Go packages are listed explicitly: ./... would also pick up Go files that
+# ship inside client/node_modules.
 lint:
-	go vet ./...
-	cd client && npm run lint
+	@# main.go embeds web/dist; vet needs it to exist, even before a build.
+	@[ -e web/dist/index.html ] || { mkdir -p web/dist && printf '<!doctype html>' > web/dist/index.html; }
+	go vet . ./internal/... ./tools/...
+	@if command -v staticcheck >/dev/null; then staticcheck . ./internal/... ./tools/...; else go run honnef.co/go/tools/cmd/staticcheck@latest . ./internal/... ./tools/...; fi
+	cd client && { [ -d node_modules ] || npm ci --silent --no-audit --no-fund; } && npm run lint
+
+## freshness: Report outdated deps and FAIL on high-severity vulnerabilities
+freshness:
+	@echo "== Go: available module updates =="
+	-go list -m -u all 2>/dev/null | grep '\[' || echo "  all Go modules current"
+	@echo ""
+	@echo "== npm: outdated packages =="
+	-cd client && npm outdated || true
+	@echo ""
+	@echo "== npm: security audit (fails on high/critical) =="
+	cd client && npm audit --audit-level=high
 
 ## frontend: Build React frontend
 frontend:

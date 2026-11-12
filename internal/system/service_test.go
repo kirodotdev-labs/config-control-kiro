@@ -8,8 +8,11 @@ import (
 	"kiromanager/internal/shared/utils"
 )
 
+// newTestService returns a service whose global Kiro home is a temp dir, so
+// tests never read or write the developer's real ~/.kiro.
 func newTestService(t *testing.T) *KiroService {
 	t.Helper()
+	t.Setenv("KIRO_HOME", t.TempDir())
 	return NewKiroService(utils.NewLogger(), "test")
 }
 
@@ -21,8 +24,7 @@ func TestNewKiroService_Defaults(t *testing.T) {
 	if svc.GetActiveWorkspace() != "" {
 		t.Errorf("expected empty workspace, got %q", svc.GetActiveWorkspace())
 	}
-	home, _ := os.UserHomeDir()
-	expected := filepath.Join(home, ".kiro")
+	expected := os.Getenv("KIRO_HOME")
 	if svc.GetConfigPath() != expected {
 		t.Errorf("expected %q, got %q", expected, svc.GetConfigPath())
 	}
@@ -93,17 +95,6 @@ func TestGetSystemInfo(t *testing.T) {
 	}
 }
 
-func TestGetKiroStatus(t *testing.T) {
-	svc := newTestService(t)
-	status, err := svc.GetKiroStatus()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := status["installed"]; !ok {
-		t.Error("expected 'installed' key in status")
-	}
-}
-
 func TestReadWriteJSONFile(t *testing.T) {
 	svc := newTestService(t)
 	dir := t.TempDir()
@@ -124,10 +115,9 @@ func TestReadWriteJSONFile(t *testing.T) {
 }
 
 func TestInitWorkspace(t *testing.T) {
-	svc := newTestService(t)
 	dir := t.TempDir()
 
-	if err := svc.InitWorkspace(dir); err != nil {
+	if err := initWorkspace(dir); err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
 
@@ -164,166 +154,55 @@ func TestAddAndRemoveWorkspace(t *testing.T) {
 	}
 }
 
-func TestGetKiroModels(t *testing.T) {
+func TestWorkspaceStatuses(t *testing.T) {
 	svc := newTestService(t)
-	models, err := svc.GetKiroModels()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(models) != 1 || models[0] != "auto" {
-		t.Errorf("expected [auto], got %v", models)
-	}
-}
-
-func TestListWorkspacesWithStats(t *testing.T) {
-	svc := newTestService(t)
-	dir := t.TempDir()
-	svc.AddWorkspace(dir)
-
-	os.WriteFile(filepath.Join(dir, ".kiro", "steering", "test.md"), []byte("# test"), 0644)
-
-	list := svc.ListWorkspacesWithStats()
-	var found *WorkspaceInfo
-	for i := range list {
-		if list[i].Path == dir {
-			found = &list[i]
-			break
+	live, gone := t.TempDir(), t.TempDir()
+	for _, p := range []string{live, gone} {
+		if err := svc.AddWorkspace(p); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if found == nil {
-		t.Fatal("workspace not found in list")
-	}
-	if found.Steering < 1 {
-		t.Errorf("expected at least 1 steering, got %d", found.Steering)
-	}
-	if !found.Exists {
-		t.Error("expected .kiro to exist")
+	_ = os.RemoveAll(gone)
+	got := svc.WorkspaceStatuses()
+	if len(got) != 2 || !got[0].Exists || got[1].Exists {
+		t.Errorf("statuses %+v", got)
 	}
 }
 
-func TestDeleteWorkspace(t *testing.T) {
+func TestScopeSwitching(t *testing.T) {
 	svc := newTestService(t)
 	dir := t.TempDir()
-	svc.AddWorkspace(dir)
-
-	if err := svc.DeleteWorkspace(dir); err != nil {
-		t.Fatalf("delete failed: %v", err)
+	if err := svc.SetWorkspace(dir); err != nil {
+		t.Fatalf("SetWorkspace: %v", err)
 	}
-
-	// .kiro should be gone
-	if _, err := os.Stat(filepath.Join(dir, ".kiro")); !os.IsNotExist(err) {
-		t.Error("expected .kiro to be deleted")
+	if svc.GetMode() != ModeWorkspace || svc.GetActiveWorkspace() != dir {
+		t.Fatalf("mode=%s active=%s", svc.GetMode(), svc.GetActiveWorkspace())
 	}
-
-	// Should be removed from list
-	for _, w := range svc.GetWorkspaces() {
-		if w.Path == dir {
-			t.Error("expected workspace removed from list")
-		}
+	if got := svc.GetConfigPath(); got != filepath.Join(dir, ".kiro") {
+		t.Errorf("config path %q", got)
+	}
+	if err := svc.SetWorkspace(filepath.Join(dir, "missing")); err == nil {
+		t.Error("missing workspace dir should error")
+	}
+	if err := svc.SetGlobal(); err != nil || svc.GetMode() != ModeGlobal {
+		t.Errorf("SetGlobal: err=%v mode=%s", err, svc.GetMode())
 	}
 }
 
-func TestCopyWorkspace(t *testing.T) {
+func TestScopeConcurrentAccess(t *testing.T) {
 	svc := newTestService(t)
-	src := t.TempDir()
-	dest := t.TempDir()
-	svc.AddWorkspace(src)
-
-	// Add a test file
-	os.WriteFile(filepath.Join(src, ".kiro", "steering", "test.md"), []byte("# copied"), 0644)
-
-	if err := svc.CopyWorkspace(src, dest); err != nil {
-		t.Fatalf("copy failed: %v", err)
-	}
-
-	// Check dest has the file
-	content, err := os.ReadFile(filepath.Join(dest, ".kiro", "steering", "test.md"))
-	if err != nil {
-		t.Fatalf("copied file not found: %v", err)
-	}
-	if string(content) != "# copied" {
-		t.Errorf("expected '# copied', got '%s'", string(content))
-	}
-
-	// Source should still exist
-	if _, err := os.Stat(filepath.Join(src, ".kiro")); err != nil {
-		t.Error("source should still exist after copy")
-	}
-}
-
-func TestMoveWorkspace(t *testing.T) {
-	svc := newTestService(t)
-	src := t.TempDir()
-	dest := t.TempDir()
-	svc.AddWorkspace(src)
-
-	os.WriteFile(filepath.Join(src, ".kiro", "steering", "test.md"), []byte("# moved"), 0644)
-
-	if err := svc.MoveWorkspace(src, dest); err != nil {
-		t.Fatalf("move failed: %v", err)
-	}
-
-	// Source .kiro should be gone
-	if _, err := os.Stat(filepath.Join(src, ".kiro")); !os.IsNotExist(err) {
-		t.Error("source .kiro should be removed after move")
-	}
-
-	// Dest should have the file
-	content, err := os.ReadFile(filepath.Join(dest, ".kiro", "steering", "test.md"))
-	if err != nil {
-		t.Fatalf("moved file not found: %v", err)
-	}
-	if string(content) != "# moved" {
-		t.Errorf("expected '# moved', got '%s'", string(content))
-	}
-
-	// Workspace list should have dest, not src
-	for _, w := range svc.GetWorkspaces() {
-		if w.Path == src {
-			t.Error("source should be removed from list")
+	dir := t.TempDir()
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 200; i++ {
+			_ = svc.SetWorkspace(dir)
+			_ = svc.SetGlobal()
 		}
+		close(done)
+	}()
+	for i := 0; i < 200; i++ {
+		_ = svc.PermissionsPath()
+		_ = svc.AgentsDir()
 	}
-	found := false
-	for _, w := range svc.GetWorkspaces() {
-		if w.Path == dest {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("dest should be in workspace list")
-	}
-}
-
-
-func TestIsVersionNewer(t *testing.T) {
-	cases := []struct {
-		candidate, current string
-		want               bool
-		desc               string
-	}{
-		{"1.1.0", "1.0.0", true, "minor bump is newer"},
-		{"1.0.1", "1.0.0", true, "patch bump is newer"},
-		{"2.0.0", "1.9.9", true, "major bump beats high minor/patch"},
-		{"1.10.0", "1.9.0", true, "two-digit minor beats single-digit"},
-
-		{"1.0.0", "1.1.0", false, "older minor is not newer"},
-		{"1.0.0", "1.0.0", false, "same version is not newer"},
-		{"1.0.0", "1.1.0", false, "the bug case: latest=1.0.0 current=1.1.0"},
-		{"0.9.0", "1.0.0", false, "older major is not newer"},
-
-		{"1.1", "1.0.0", true, "missing patch component still works"},
-		{"1.1.0", "1.1", false, "trailing zero counts as equal"},
-
-		{"", "1.0.0", false, "empty candidate is not newer"},
-		{"1.0.0", "", false, "empty current is not newer"},
-		{"1.0.0", "dev", false, "dev current never gets an update"},
-		{"abc", "1.0.0", false, "non-numeric candidate falls back safely"},
-	}
-	for _, tc := range cases {
-		got := isVersionNewer(tc.candidate, tc.current)
-		if got != tc.want {
-			t.Errorf("%s: isVersionNewer(%q, %q) = %v, want %v",
-				tc.desc, tc.candidate, tc.current, got, tc.want)
-		}
-	}
+	<-done
 }

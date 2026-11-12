@@ -6,13 +6,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"kiromanager/internal/shared/utils"
 )
 
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
-	svc := NewKiroService(utils.NewLogger(), "test")
+	svc := newTestService(t)
 	return NewHandler(svc)
 }
 
@@ -30,30 +28,6 @@ func TestHandler_GetSystemInfo(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&result)
 	if result["platform"] == nil {
 		t.Error("expected platform in response")
-	}
-}
-
-func TestHandler_GetKiroStatus(t *testing.T) {
-	h := newTestHandler(t)
-	req := httptest.NewRequest("GET", "/api/kiro/status", nil)
-	w := httptest.NewRecorder()
-
-	h.GetKiroStatus(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHandler_GetKiroModels(t *testing.T) {
-	h := newTestHandler(t)
-	req := httptest.NewRequest("GET", "/api/system/models", nil)
-	w := httptest.NewRecorder()
-
-	h.GetKiroModels(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
 	}
 }
 

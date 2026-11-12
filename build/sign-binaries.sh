@@ -9,11 +9,25 @@ REGION="us-east-1"
 CDSIGNER_REGION="us-west-2"
 SIGNING_TIMEOUT=300
 
+# The publisher's signing identifiers aren't kept in this file. Set them in the
+# environment, or in build/signing.env (git-ignored, never committed):
+#   SIGNING_ACCOUNT_ID=<AWS account that runs the signing infrastructure>
+#   APPLE_TEAM_ID=<Apple Developer team ID for the Developer ID certificate>
+SIGNING_ENV="$(dirname "$0")/signing.env"
+if [ -f "$SIGNING_ENV" ]; then
+    # shellcheck disable=SC1090
+    . "$SIGNING_ENV"
+fi
+if [ -z "$SIGNING_ACCOUNT_ID" ] || [ -z "$APPLE_TEAM_ID" ]; then
+    echo "❌ Set SIGNING_ACCOUNT_ID and APPLE_TEAM_ID (environment or build/signing.env) to sign."
+    exit 1
+fi
+
 # Infrastructure
 UNSIGNED_BUCKET="cckiro-signing-unsigned"
 SIGNED_BUCKET="cckiro-signing-signed"
 ARTIFACTS_BUCKET="cckiro-signing-artifacts"
-S3_ACCESS_ROLE="arn:aws:iam::382967313053:role/cckiro-signing-s3-access"
+S3_ACCESS_ROLE="arn:aws:iam::${SIGNING_ACCOUNT_ID}:role/cckiro-signing-s3-access"
 CDSIGNER_API="https://api.signer.builder-tools.aws.dev"
 
 echo ""
@@ -50,8 +64,8 @@ eval "$CREDS"
 
 # Verify
 ACCOUNT=$(aws sts get-caller-identity --region $REGION --query 'Account' --output text 2>/dev/null)
-if [ "$ACCOUNT" != "382967313053" ]; then
-    echo "❌ Wrong account: $ACCOUNT (expected 382967313053)"
+if [ "$ACCOUNT" != "$SIGNING_ACCOUNT_ID" ]; then
+    echo "❌ Wrong account: $ACCOUNT (expected $SIGNING_ACCOUNT_ID)"
     exit 1
 fi
 echo "✅ Authenticated to account $ACCOUNT"
@@ -161,7 +175,7 @@ sign_macos() {
                     \"identifier\": \"com.amazon.aws.kiro.cckiro\",
                     \"signing_requirements\": {
                         \"certificate_type\": \"developerIDAppDistribution\",
-                        \"team_id\": \"94KV3E626L\"
+                        \"team_id\": \"$APPLE_TEAM_ID\"
                     }
                 }
             },

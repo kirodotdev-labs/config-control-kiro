@@ -3,8 +3,10 @@ package mcp
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"kiromanager/internal/shared/ordered"
 	"kiromanager/internal/shared/utils"
 	"kiromanager/internal/system"
 )
@@ -12,6 +14,7 @@ import (
 func setupTestService(t *testing.T) (*MCPService, *system.KiroService, string) {
 	t.Helper()
 	dir := t.TempDir()
+	t.Setenv("KIRO_HOME", t.TempDir()) // never write the real ~/.kiro
 	logger := utils.NewLogger()
 	kiroSvc := system.NewKiroService(logger, "test")
 	kiroSvc.SetWorkspace(dir)
@@ -25,117 +28,43 @@ func writeTestMCPConfig(t *testing.T, dir string, config string) {
 	os.WriteFile(path, []byte(config), 0644)
 }
 
-func TestGetAllMCPServers_Empty(t *testing.T) {
-	svc, _, _ := setupTestService(t)
-	servers, err := svc.GetAllMCPServers()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(servers) != 0 {
-		t.Errorf("expected 0 servers, got %d", len(servers))
-	}
-}
-
-func TestGetAllMCPServers_WithServers(t *testing.T) {
-	svc, _, dir := setupTestService(t)
-	writeTestMCPConfig(t, dir, `{
-		"mcpServers": {
-			"server-a": {"command": "node", "args": ["index.js"]},
-			"server-b": {"url": "http://localhost:8080"}
-		}
-	}`)
-
-	servers, err := svc.GetAllMCPServers()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(servers) != 2 {
-		t.Errorf("expected 2 servers, got %d", len(servers))
-	}
-
-	// Should be sorted alphabetically
-	if servers[0].Name != "server-a" {
-		t.Errorf("expected first server 'server-a', got %q", servers[0].Name)
-	}
-	if servers[0].Type != "local" {
-		t.Errorf("expected type 'local', got %q", servers[0].Type)
-	}
-	if servers[1].Type != "remote" {
-		t.Errorf("expected type 'remote', got %q", servers[1].Type)
-	}
-}
-
 func TestGetMCPConfig(t *testing.T) {
-	svc, _, dir := setupTestService(t)
-	writeTestMCPConfig(t, dir, `{"mcpServers": {"test": {"command": "echo"}}}`)
-
-	config, err := svc.GetMCPConfig()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if config["mcpServers"] == nil {
-		t.Error("expected mcpServers in config")
-	}
+	t.Run("missing file yields empty config", func(t *testing.T) {
+		svc, _, _ := setupTestService(t)
+		doc, err := svc.GetMCPConfig()
+		if err != nil || doc.Exists || !doc.Config.Has("mcpServers") {
+			t.Fatalf("doc %+v err %v", doc, err)
+		}
+	})
+	t.Run("invalid JSON is an error, never an empty config", func(t *testing.T) {
+		svc, _, dir := setupTestService(t)
+		writeTestMCPConfig(t, dir, `{"mcpServers": {`)
+		if _, err := svc.GetMCPConfig(); err == nil {
+			t.Fatal("expected error for unparseable mcp.json")
+		}
+	})
 }
 
-func TestSaveMCPConfig(t *testing.T) {
+func TestSaveMCPConfigKeepsKeyOrder(t *testing.T) {
 	svc, _, dir := setupTestService(t)
-	config := map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"new-server": map[string]interface{}{
-				"command": "python",
-				"args":    []string{"-m", "server"},
-			},
-		},
+	if _, err := svc.SaveMCPConfig(nil); err == nil {
+		t.Error("nil config should be rejected")
 	}
-
-	result, err := svc.SaveMCPConfig(config)
-	if err != nil {
-		t.Fatalf("save failed: %v", err)
+	in := `{"zeta":1,"mcpServers":{"b":{"command":"x"},"a":{"command":"y"}}}`
+	cfg := ordered.New()
+	if err := cfg.UnmarshalJSON([]byte(in)); err != nil {
+		t.Fatal(err)
 	}
-	if result["success"] != true {
-		t.Error("expected success=true")
+	if _, err := svc.SaveMCPConfig(cfg); err != nil {
+		t.Fatal(err)
 	}
-
-	// Verify file was written
-	path := filepath.Join(dir, ".kiro", "settings", "mcp.json")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Error("config file not created")
+	data, _ := os.ReadFile(filepath.Join(dir, ".kiro", "settings", "mcp.json"))
+	text := string(data)
+	if strings.Index(text, "zeta") > strings.Index(text, "mcpServers") || strings.Index(text, `"b"`) > strings.Index(text, `"a"`) {
+		t.Errorf("key order not preserved:\n%s", text)
 	}
-}
-
-func TestUpdateMCPServer(t *testing.T) {
-	svc, _, dir := setupTestService(t)
-	writeTestMCPConfig(t, dir, `{"mcpServers": {"test": {"command": "echo"}}}`)
-
-	server, err := svc.UpdateMCPServer("test", map[string]interface{}{"enabled": false})
-	if err != nil {
-		t.Fatalf("update failed: %v", err)
-	}
-	if server == nil {
-		t.Fatal("expected server, got nil")
-	}
-	if server.Enabled {
-		t.Error("expected server to be disabled")
-	}
-}
-
-func TestUpdateMCPServer_NotFound(t *testing.T) {
-	svc, _, dir := setupTestService(t)
-	writeTestMCPConfig(t, dir, `{"mcpServers": {}}`)
-
-	_, err := svc.UpdateMCPServer("nonexistent", map[string]interface{}{})
-	if err == nil {
-		t.Error("expected error for nonexistent server")
-	}
-}
-
-func TestDeployMCP_NotFound(t *testing.T) {
-	svc, _, dir := setupTestService(t)
-	writeTestMCPConfig(t, dir, `{"mcpServers": {}}`)
-
-	_, err := svc.DeployMCP("nonexistent")
-	if err == nil {
-		t.Error("expected error for nonexistent server")
+	doc, err := svc.GetMCPConfig()
+	if err != nil || !doc.Exists {
+		t.Fatalf("reload: %+v %v", doc, err)
 	}
 }

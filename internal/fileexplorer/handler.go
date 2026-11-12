@@ -2,6 +2,7 @@ package fileexplorer
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"kiromanager/internal/shared/utils"
@@ -49,7 +50,8 @@ func (h *Handler) Browse(w http.ResponseWriter, r *http.Request) {
 	utils.RespondJSON(w, http.StatusOK, result)
 }
 
-// ReadFile handles GET requests to read the contents of a file.
+// ReadFile handles GET /fileexplorer/read?path=…: {content, exists}. With
+// optional=1 a missing file answers {content: "", exists: false} instead of 404.
 // Query parameter: path (required).
 func (h *Handler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
@@ -63,40 +65,24 @@ func (h *Handler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	content, err := h.service.ReadFile(path)
+	var appErr *utils.AppError
+	if err != nil && r.URL.Query().Get("optional") == "1" && errors.As(err, &appErr) && appErr.Code == "FILE_NOT_FOUND" {
+		// A file that may not exist yet (e.g. the Global cli.json, read from a Workspace).
+		utils.RespondJSON(w, http.StatusOK, map[string]any{"content": "", "exists": false})
+		return
+	}
 	if err != nil {
 		utils.RespondError(w, err)
 		return
 	}
 
-	utils.RespondJSON(w, http.StatusOK, map[string]string{"content": content})
-}
-
-// CreateFolder handles POST requests to create a new directory.
-func (h *Handler) CreateFolder(w http.ResponseWriter, r *http.Request) {
-	var req CreateFolderRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
-		return
-	}
-
-	if err := utils.ValidatePath(req.Path); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	if err := h.service.CreateFolder(req.Path); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	utils.RespondJSON(w, http.StatusOK, map[string]string{"message": "Folder created"})
+	utils.RespondJSON(w, http.StatusOK, map[string]any{"content": content, "exists": true})
 }
 
 // CreateFile handles POST requests to create or overwrite a file.
 func (h *Handler) CreateFile(w http.ResponseWriter, r *http.Request) {
 	var req CreateFileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
+	if !utils.DecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -105,229 +91,51 @@ func (h *Handler) CreateFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.CreateFile(req.Path, req.Content); err != nil {
+	if err := h.service.CreateFile(req.Path, req.Content, req.CreateOnly); err != nil {
 		utils.RespondError(w, err)
 		return
 	}
 
-	utils.RespondJSON(w, http.StatusOK, map[string]string{"message": "File created"})
+	utils.RespondJSON(w, http.StatusOK, map[string]string{"path": utils.ExpandHomePath(req.Path)})
 }
 
-// Cut handles POST requests to move a file or directory from source to dest.
-func (h *Handler) Cut(w http.ResponseWriter, r *http.Request) {
-	var req CutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
+// CopyFile handles POST /fileexplorer/copy {source, dest, overwrite}: an
+// existing file copied into a skill or power folder.
+func (h *Handler) CopyFile(w http.ResponseWriter, r *http.Request) {
+	var req CopyFileRequest
+	if !utils.DecodeJSON(w, r, &req) {
 		return
 	}
-
-	if err := utils.ValidatePath(req.Source); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-	if err := utils.ValidatePath(req.Dest); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	if err := h.service.Cut(req.Source, req.Dest); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	utils.RespondJSON(w, http.StatusOK, map[string]string{"message": "Cut successfully"})
-}
-
-// Copy handles POST requests to duplicate a file or directory.
-func (h *Handler) Copy(w http.ResponseWriter, r *http.Request) {
-	var req CopyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
-		return
-	}
-
-	if err := utils.ValidatePath(req.Source); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-	if err := utils.ValidatePath(req.Dest); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	if err := h.service.Copy(req.Source, req.Dest); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	utils.RespondJSON(w, http.StatusOK, map[string]string{"message": "Copied successfully"})
-}
-
-// Rename handles POST requests to rename a file or directory.
-func (h *Handler) Rename(w http.ResponseWriter, r *http.Request) {
-	var req RenameRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
-		return
-	}
-
-	if err := utils.ValidatePath(req.Path); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	if err := h.service.Rename(req.Path, req.NewName); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	utils.RespondJSON(w, http.StatusOK, map[string]string{"message": "Renamed successfully"})
-}
-
-// Delete handles POST requests to remove a file or directory.
-func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	var req DeleteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
-		return
-	}
-
-	if err := utils.ValidatePath(req.Path); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	if err := h.service.Delete(req.Path); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-
-	utils.RespondJSON(w, http.StatusOK, map[string]string{"message": "Deleted successfully"})
-}
-
-// BulkCopy handles POST requests to copy multiple sources to a destination.
-// Query parameter: resolution (optional, defaults to "overwrite").
-func (h *Handler) BulkCopy(w http.ResponseWriter, r *http.Request) {
-	var req BulkCopyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
-		return
-	}
-
-	if err := utils.ValidatePath(req.Dest); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-	for _, src := range req.Sources {
-		if err := utils.ValidatePath(src); err != nil {
-			utils.RespondError(w, err)
-			return
-		}
-	}
-
-	resolution := r.URL.Query().Get("resolution")
-	if resolution == "" {
-		resolution = "overwrite"
-	}
-	
-	response := h.service.BulkCopy(req.Sources, req.Dest, resolution)
-	utils.RespondJSON(w, http.StatusOK, response)
-}
-
-// BulkCut handles POST requests to move multiple sources to a destination.
-// Query parameter: resolution (optional, defaults to "overwrite").
-func (h *Handler) BulkCut(w http.ResponseWriter, r *http.Request) {
-	var req BulkCutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
-		return
-	}
-
-	if err := utils.ValidatePath(req.Dest); err != nil {
-		utils.RespondError(w, err)
-		return
-	}
-	for _, src := range req.Sources {
-		if err := utils.ValidatePath(src); err != nil {
-			utils.RespondError(w, err)
-			return
-		}
-	}
-
-	resolution := r.URL.Query().Get("resolution")
-	if resolution == "" {
-		resolution = "overwrite"
-	}
-	
-	response := h.service.BulkCut(req.Sources, req.Dest, resolution)
-	utils.RespondJSON(w, http.StatusOK, response)
-}
-
-// BulkDelete handles POST requests to delete multiple files or directories.
-func (h *Handler) BulkDelete(w http.ResponseWriter, r *http.Request) {
-	var req BulkDeleteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
-		return
-	}
-
-	for _, p := range req.Paths {
+	for _, p := range []string{req.Source, req.Dest} {
 		if err := utils.ValidatePath(p); err != nil {
 			utils.RespondError(w, err)
 			return
 		}
 	}
-
-	response := h.service.BulkDelete(req.Paths)
-	utils.RespondJSON(w, http.StatusOK, response)
-}
-
-// CheckConflicts handles POST requests to check which sources would conflict
-// with existing entries at the destination.
-func (h *Handler) CheckConflicts(w http.ResponseWriter, r *http.Request) {
-	var req BulkCopyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
-		return
-	}
-
-	if err := utils.ValidatePath(req.Dest); err != nil {
+	if err := h.service.CopyFile(req.Source, req.Dest, req.Overwrite); err != nil {
 		utils.RespondError(w, err)
 		return
 	}
-	for _, src := range req.Sources {
-		if err := utils.ValidatePath(src); err != nil {
-			utils.RespondError(w, err)
-			return
-		}
-	}
-
-	conflicts := h.service.CheckConflicts(req.Sources, req.Dest)
-	utils.RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"conflicts": conflicts,
-	})
+	utils.RespondJSON(w, http.StatusOK, map[string]string{"path": utils.ExpandHomePath(req.Dest)})
 }
 
-// GenerateUniqueName handles GET requests to generate a non-conflicting filename.
-// Query parameters: basePath (required), name (required).
-func (h *Handler) GenerateUniqueName(w http.ResponseWriter, r *http.Request) {
-	basePath := r.URL.Query().Get("basePath")
-	name := r.URL.Query().Get("name")
-
-	if basePath == "" || name == "" {
-		utils.RespondError(w, utils.NewAppError("basePath and name required", http.StatusBadRequest, "INVALID_REQUEST"))
+// DeleteFile handles DELETE /fileexplorer/file?path=... — removes a file in a
+// deletable folder, or a skill or spec folder.
+func (h *Handler) DeleteFile(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		utils.RespondError(w, utils.BadRequest("path is required", "MISSING_PATH"))
 		return
 	}
-
-	if err := utils.ValidatePath(basePath); err != nil {
+	if err := utils.ValidatePath(path); err != nil {
 		utils.RespondError(w, err)
 		return
 	}
-
-	uniqueName := h.service.GenerateUniqueName(basePath, name)
-	utils.RespondJSON(w, http.StatusOK, map[string]string{
-		"uniqueName": uniqueName,
-	})
+	if err := h.service.Delete(path); err != nil {
+		utils.RespondError(w, err)
+		return
+	}
+	utils.RespondJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // ResolvePath handles POST requests that validate and translate a
@@ -341,8 +149,7 @@ func (h *Handler) GenerateUniqueName(w http.ResponseWriter, r *http.Request) {
 // without being treated as a request failure.
 func (h *Handler) ResolvePath(w http.ResponseWriter, r *http.Request) {
 	var req ResolvePathRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondError(w, utils.NewAppError("Invalid request", http.StatusBadRequest, "INVALID_REQUEST"))
+	if !utils.DecodeJSON(w, r, &req) {
 		return
 	}
 

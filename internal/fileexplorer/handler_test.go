@@ -1,6 +1,7 @@
 package fileexplorer
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +13,7 @@ import (
 )
 
 func newTestHandler() *Handler {
-	return NewHandler(NewFileExplorerService(utils.NewLogger(), false))
+	return NewHandler(NewFileExplorerService(utils.NewLogger(), false, nil))
 }
 
 func TestHandler_Browse(t *testing.T) {
@@ -58,6 +59,22 @@ func TestHandler_ReadFile(t *testing.T) {
 	}
 }
 
+func TestHandler_ReadFile_Optional(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "cli.json")
+	h := newTestHandler()
+	for _, tc := range []struct {
+		query string
+		code  int
+		body  string
+	}{{"", http.StatusNotFound, "FILE_NOT_FOUND"}, {"&optional=1", http.StatusOK, `"exists":false`}} {
+		w := httptest.NewRecorder()
+		h.ReadFile(w, httptest.NewRequest("GET", "/api/fileexplorer/read?path="+missing+tc.query, nil))
+		if w.Code != tc.code || !strings.Contains(w.Body.String(), tc.body) {
+			t.Errorf("%q: %d %s", tc.query, w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestHandler_ReadFile_MissingPath(t *testing.T) {
 	h := newTestHandler()
 	req := httptest.NewRequest("GET", "/api/fileexplorer/read", nil)
@@ -70,28 +87,12 @@ func TestHandler_ReadFile_MissingPath(t *testing.T) {
 	}
 }
 
-func TestHandler_CreateFolder(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "newfolder")
-
-	h := newTestHandler()
-	body := `{"path":"` + path + `"}`
-	req := httptest.NewRequest("POST", "/api/fileexplorer/folder", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	h.CreateFolder(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
 func TestHandler_CreateFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "new.txt")
 
 	h := newTestHandler()
-	body := `{"path":"` + path + `","content":"hello"}`
+	body := jsonBody(map[string]string{"path": path, "content": "hello"})
 	req := httptest.NewRequest("POST", "/api/fileexplorer/file", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -102,105 +103,6 @@ func TestHandler_CreateFile(t *testing.T) {
 	}
 }
 
-func TestHandler_Delete(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "del.txt")
-	os.WriteFile(path, []byte(""), 0644)
-
-	h := newTestHandler()
-	body := `{"path":"` + path + `"}`
-	req := httptest.NewRequest("DELETE", "/api/fileexplorer/delete", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	h.Delete(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHandler_GenerateUniqueName(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte(""), 0644)
-
-	h := newTestHandler()
-	req := httptest.NewRequest("GET", "/api/fileexplorer/unique-name?basePath="+dir+"&name=file.txt", nil)
-	w := httptest.NewRecorder()
-
-	h.GenerateUniqueName(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHandler_GenerateUniqueName_MissingParams(t *testing.T) {
-	h := newTestHandler()
-	req := httptest.NewRequest("GET", "/api/fileexplorer/unique-name", nil)
-	w := httptest.NewRecorder()
-
-	h.GenerateUniqueName(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandler_PathTraversal(t *testing.T) {
-	h := newTestHandler()
-
-	traversalPaths := []string{
-		"/tmp/../etc/passwd",
-		"../../etc/passwd",
-		"/home/user/../../etc/shadow",
-		"..%2F..%2Fetc%2Fpasswd",
-	}
-
-	for _, tp := range traversalPaths {
-		t.Run("Browse_"+tp, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/api/fileexplorer/browse?path="+tp, nil)
-			w := httptest.NewRecorder()
-			h.Browse(w, req)
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 for path %q, got %d", tp, w.Code)
-			}
-		})
-
-		t.Run("ReadFile_"+tp, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/api/fileexplorer/read?path="+tp, nil)
-			w := httptest.NewRecorder()
-			h.ReadFile(w, req)
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 for path %q, got %d", tp, w.Code)
-			}
-		})
-	}
-
-	// POST endpoints with traversal in body
-	for _, tp := range traversalPaths {
-		t.Run("CreateFolder_"+tp, func(t *testing.T) {
-			body := strings.NewReader(`{"path":"` + tp + `"}`)
-			req := httptest.NewRequest("POST", "/api/fileexplorer/folder", body)
-			w := httptest.NewRecorder()
-			h.CreateFolder(w, req)
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 for path %q, got %d", tp, w.Code)
-			}
-		})
-
-		t.Run("Delete_"+tp, func(t *testing.T) {
-			body := strings.NewReader(`{"path":"` + tp + `"}`)
-			req := httptest.NewRequest("POST", "/api/fileexplorer/delete", body)
-			w := httptest.NewRecorder()
-			h.Delete(w, req)
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 for path %q, got %d", tp, w.Code)
-			}
-		})
-	}
-}
-
-
 func TestHandler_ResolvePath(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "ok.txt")
@@ -208,7 +110,7 @@ func TestHandler_ResolvePath(t *testing.T) {
 
 	t.Run("valid directory", func(t *testing.T) {
 		h := newTestHandler()
-		body := strings.NewReader(`{"path":"` + dir + `"}`)
+		body := strings.NewReader(jsonBody(map[string]string{"path": dir}))
 		req := httptest.NewRequest("POST", "/api/fileexplorer/resolve-path", body)
 		w := httptest.NewRecorder()
 
@@ -227,7 +129,7 @@ func TestHandler_ResolvePath(t *testing.T) {
 
 	t.Run("valid file", func(t *testing.T) {
 		h := newTestHandler()
-		body := strings.NewReader(`{"path":"` + filePath + `"}`)
+		body := strings.NewReader(jsonBody(map[string]string{"path": filePath}))
 		req := httptest.NewRequest("POST", "/api/fileexplorer/resolve-path", body)
 		w := httptest.NewRecorder()
 
@@ -269,4 +171,10 @@ func TestHandler_ResolvePath(t *testing.T) {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
 	})
+}
+
+// jsonBody encodes a request body, so Windows paths (with backslashes) stay valid JSON.
+func jsonBody(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

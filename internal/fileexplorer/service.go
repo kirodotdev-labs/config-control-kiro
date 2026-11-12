@@ -1,30 +1,108 @@
 package fileexplorer
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"kiromanager/internal/shared/utils"
+	"kiromanager/internal/system"
 )
 
 // FileExplorerService provides file system operations including browsing,
 // reading, creating, copying, moving, renaming, and deleting files and folders.
 type FileExplorerService struct {
-	logger *utils.Logger
-	isWSL  bool
+	logger    *utils.Logger
+	isWSL     bool
+	deletable func() system.DeletableRoots
 }
 
 // NewFileExplorerService creates a new FileExplorerService. Set isWSL to true
 // when running inside Windows Subsystem for Linux so pasted Windows-style
-// paths can be translated to /mnt/<drive>/... mount points.
-func NewFileExplorerService(logger *utils.Logger, isWSL bool) *FileExplorerService {
-	return &FileExplorerService{
-		logger: logger,
-		isWSL:  isWSL,
+// paths can be translated to /mnt/<drive>/... mount points. deletable names
+// the folders Delete may work in; nil allows no deletion.
+func NewFileExplorerService(logger *utils.Logger, isWSL bool, deletable func() system.DeletableRoots) *FileExplorerService {
+	if deletable == nil {
+		deletable = func() system.DeletableRoots { return system.DeletableRoots{} }
 	}
+	return &FileExplorerService{
+		logger:    logger,
+		isWSL:     isWSL,
+		deletable: deletable,
+	}
+}
+
+// Delete removes a file below one of the deletable folders, or a skill or
+// spec folder (a direct child of the skills or specs folder) with everything
+// in it. Anything else is refused, so Kiro's stores and settings files can't
+// be deleted through the app.
+func (s *FileExplorerService) Delete(path string) error {
+	abs, err := filepath.Abs(utils.ExpandHomePath(path))
+	if err != nil {
+		return utils.BadRequest("Not a usable path", "INVALID_PATH")
+	}
+	info, err := os.Stat(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return utils.NewAppError("This file doesn't exist.", http.StatusNotFound, "FILE_NOT_FOUND")
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %v", abs, err)
+	}
+	roots := s.deletable()
+	if info.IsDir() {
+		if !isDirectChild(abs, roots.Folders) {
+			return utils.NewAppError("Only a skill, a spec or one of your own powers can be deleted here.", http.StatusForbidden, "NOT_DELETABLE")
+		}
+		if err := os.RemoveAll(abs); err != nil {
+			return fmt.Errorf("failed to delete folder: %v", err)
+		}
+		s.logger.Info("Deleted folder: %s", abs)
+		return nil
+	}
+	if !isBelow(abs, roots.Files) && !isOneOf(abs, roots.Exact) {
+		return utils.NewAppError("Only hooks, steering, skills, prompts, workflows, specs, files inside powers and lsp.json can be deleted here.", http.StatusForbidden, "NOT_DELETABLE")
+	}
+	if err := os.Remove(abs); err != nil {
+		return fmt.Errorf("failed to delete file: %v", err)
+	}
+	s.logger.Info("Deleted file: %s", abs)
+	return nil
+}
+
+// isOneOf reports whether abs is exactly one of paths.
+func isOneOf(abs string, paths []string) bool {
+	for _, p := range paths {
+		if p != "" && filepath.Clean(p) == abs {
+			return true
+		}
+	}
+	return false
+}
+
+// isBelow reports whether abs is strictly inside one of roots.
+func isBelow(abs string, roots []string) bool {
+	for _, root := range roots {
+		rel, err := filepath.Rel(root, abs)
+		if err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			return true
+		}
+	}
+	return false
+}
+
+// isDirectChild reports whether abs is an immediate child of one of roots.
+func isDirectChild(abs string, roots []string) bool {
+	for _, root := range roots {
+		if filepath.Dir(abs) == filepath.Clean(root) {
+			return true
+		}
+	}
+	return false
 }
 
 // Browse lists the folders and files at the given path. Hidden entries (prefixed
@@ -101,6 +179,9 @@ func (s *FileExplorerService) ReadFile(path string) (string, error) {
 	path = utils.ExpandHomePath(path)
 
 	content, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", utils.NewAppError("This file doesn't exist yet.", http.StatusNotFound, "FILE_NOT_FOUND")
+	}
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %v", err)
 	}
@@ -108,36 +189,17 @@ func (s *FileExplorerService) ReadFile(path string) (string, error) {
 	return string(content), nil
 }
 
-// CreateFolder creates a new directory at the given path, including any
-// necessary parent directories. Returns an error if the folder already exists.
-func (s *FileExplorerService) CreateFolder(path string) error {
-	path = utils.ExpandHomePath(path)
-
-	// Check if folder already exists
-	if _, err := os.Stat(path); err == nil {
-		return utils.NewAppError("Folder already exists", 409, "CONFLICT")
-	}
-
-	if err := os.MkdirAll(path, 0755); err != nil {
-		return fmt.Errorf("failed to create folder: %v", err)
-	}
-
-	s.logger.Info("Created folder: %s", path)
-	return nil
-}
-
 // CreateFile writes content to the file at the given path, creating parent
 // directories as needed. Existing files are overwritten.
-func (s *FileExplorerService) CreateFile(path, content string) error {
+func (s *FileExplorerService) CreateFile(path, content string, createOnly bool) error {
 	path = utils.ExpandHomePath(path)
-
-	// Create parent directories if needed
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("failed to create parent directory: %v", err)
+	if createOnly {
+		if _, err := os.Stat(path); err == nil {
+			return utils.NewAppError("A file with that name already exists", http.StatusConflict, "FILE_EXISTS")
+		}
 	}
-
-	// Write file (creates or overwrites)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	// WriteFileAtomic creates parent directories and never leaves a torn file.
+	if err := utils.WriteFileAtomic(path, []byte(content)); err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
 
@@ -145,251 +207,57 @@ func (s *FileExplorerService) CreateFile(path, content string) error {
 	return nil
 }
 
-// Cut moves a file or directory from source to dest.
-func (s *FileExplorerService) Cut(source, dest string) error {
-	source = utils.ExpandHomePath(source)
-	dest = utils.ExpandHomePath(dest)
+// maxCopy caps a copied file: skill scripts, references and assets are small.
+const maxCopy = 20 << 20
 
-	if err := os.Rename(source, dest); err != nil {
-		return fmt.Errorf("failed to cut: %v", err)
-	}
-
-	s.logger.Info("Cut %s to %s", source, dest)
-	return nil
-}
-
-// Copy duplicates a file or directory from source to dest.
-// Returns an error if the destination already exists.
-func (s *FileExplorerService) Copy(source, dest string) error {
-	source = utils.ExpandHomePath(source)
-	dest = utils.ExpandHomePath(dest)
-
-	// Check if destination exists
-	if _, err := os.Stat(dest); err == nil {
-		return utils.NewAppError("Destination already exists", 409, "CONFLICT")
-	}
-
-	sourceInfo, err := os.Stat(source)
+// CopyFile copies the regular file at source to dest, byte for byte, so
+// scripts and binary assets survive. dest must be inside a folder the UI
+// manages (the same roots files can be deleted from: skills, powers and so
+// on); an existing dest is replaced only with overwrite.
+func (s *FileExplorerService) CopyFile(source, dest string, overwrite bool) error {
+	src, err := filepath.Abs(utils.ExpandHomePath(source))
 	if err != nil {
-		return fmt.Errorf("source not found: %v", err)
+		return utils.BadRequest("Not a usable path", "INVALID_PATH")
 	}
-
-	if sourceInfo.IsDir() {
-		return s.copyDir(source, dest)
+	dst, err := filepath.Abs(utils.ExpandHomePath(dest))
+	if err != nil {
+		return utils.BadRequest("Not a usable path", "INVALID_PATH")
 	}
-	return s.copyFile(source, dest)
-}
-
-// copyFile copies a single file from source to dest.
-func (s *FileExplorerService) copyFile(source, dest string) error {
-	if err := utils.CopyFile(source, dest); err != nil {
-		return err
+	if !isBelow(dst, s.deletable().Files) {
+		return utils.NewAppError("Files can only be copied into a skill or power folder here.", http.StatusForbidden, "NOT_WRITABLE")
 	}
-	s.logger.Info("Copied file %s to %s", source, dest)
+	info, err := os.Stat(src)
+	if errors.Is(err, fs.ErrNotExist) {
+		return utils.NewAppError("That file doesn't exist.", http.StatusNotFound, "FILE_NOT_FOUND")
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read file: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		return utils.BadRequest("Only a file can be copied, not a folder.", "NOT_A_FILE")
+	}
+	if info.Size() > maxCopy {
+		return utils.BadRequest("That file is over 20 MB, too big for a skill.", "TOO_LARGE")
+	}
+	if src == dst {
+		return utils.BadRequest("The file is already there.", "SAME_FILE")
+	}
+	if _, err := os.Stat(dst); err == nil && !overwrite {
+		return utils.NewAppError("A file with that name already exists", http.StatusConflict, "FILE_EXISTS")
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %v", err)
+	}
+	if err := utils.WriteFileAtomic(dst, data); err != nil {
+		return fmt.Errorf("failed to write file: %v", err)
+	}
+	if info.Mode()&0o111 != 0 { // keep a script runnable
+		_ = os.Chmod(dst, info.Mode().Perm())
+	}
+	s.logger.Info("Copied %s to %s", src, dst)
 	return nil
 }
-
-// copyDir recursively copies a directory from source to dest.
-func (s *FileExplorerService) copyDir(source, dest string) error {
-	if err := utils.CopyDir(source, dest); err != nil {
-		return err
-	}
-	s.logger.Info("Copied directory %s to %s", source, dest)
-	return nil
-}
-
-// Rename renames a file or directory at path to newName within the same parent directory.
-func (s *FileExplorerService) Rename(path, newName string) error {
-	path = utils.ExpandHomePath(path)
-
-	dir := filepath.Dir(path)
-	newPath := filepath.Join(dir, newName)
-
-	if err := os.Rename(path, newPath); err != nil {
-		return fmt.Errorf("failed to rename: %v", err)
-	}
-
-	s.logger.Info("Renamed %s to %s", path, newPath)
-	return nil
-}
-
-// Delete removes the file or directory at the given path.
-func (s *FileExplorerService) Delete(path string) error {
-	path = utils.ExpandHomePath(path)
-
-	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("failed to delete: %v", err)
-	}
-
-	s.logger.Info("Deleted: %s", path)
-	return nil
-}
-
-// BulkCopy copies multiple source paths into dest. The resolution parameter
-// controls conflict handling: "skip", "rename", or "overwrite".
-func (s *FileExplorerService) BulkCopy(sources []string, dest string, resolution string) *BulkOperationResponse {
-	dest = utils.ExpandHomePath(dest)
-	response := &BulkOperationResponse{
-		Success: []string{},
-		Failed:  []FailedOperation{},
-	}
-
-	for _, source := range sources {
-		source = utils.ExpandHomePath(source)
-		sourceName := filepath.Base(source)
-		destPath := filepath.Join(dest, sourceName)
-
-		// Check for conflicts and handle based on resolution
-		if _, err := os.Stat(destPath); err == nil {
-			switch resolution {
-			case "skip":
-				continue
-			case "rename":
-				destPath = filepath.Join(dest, s.GenerateUniqueName(dest, sourceName))
-			case "overwrite":
-				// Remove existing file/folder before copying
-				os.RemoveAll(destPath)
-			}
-		}
-
-		// Perform copy
-		sourceInfo, err := os.Stat(source)
-		if err != nil {
-			response.Failed = append(response.Failed, FailedOperation{
-				Path:  source,
-				Error: err.Error(),
-			})
-			continue
-		}
-
-		if sourceInfo.IsDir() {
-			err = s.copyDir(source, destPath)
-		} else {
-			err = s.copyFile(source, destPath)
-		}
-
-		if err != nil {
-			response.Failed = append(response.Failed, FailedOperation{
-				Path:  source,
-				Error: err.Error(),
-			})
-		} else {
-			response.Success = append(response.Success, source)
-		}
-	}
-
-	return response
-}
-
-// BulkCut moves multiple source paths into dest. The resolution parameter
-// controls conflict handling: "skip", "rename", or "overwrite".
-func (s *FileExplorerService) BulkCut(sources []string, dest string, resolution string) *BulkOperationResponse {
-	dest = utils.ExpandHomePath(dest)
-	response := &BulkOperationResponse{
-		Success: []string{},
-		Failed:  []FailedOperation{},
-	}
-
-	for _, source := range sources {
-		source = utils.ExpandHomePath(source)
-		sourceName := filepath.Base(source)
-		destPath := filepath.Join(dest, sourceName)
-
-		// Check for conflicts and handle based on resolution
-		if _, err := os.Stat(destPath); err == nil {
-			switch resolution {
-			case "skip":
-				continue
-			case "rename":
-				destPath = filepath.Join(dest, s.GenerateUniqueName(dest, sourceName))
-			case "overwrite":
-				// Remove existing file/folder before moving
-				os.RemoveAll(destPath)
-			}
-		}
-
-		// Perform move
-		if err := os.Rename(source, destPath); err != nil {
-			response.Failed = append(response.Failed, FailedOperation{
-				Path:  source,
-				Error: err.Error(),
-			})
-		} else {
-			response.Success = append(response.Success, source)
-		}
-	}
-
-	return response
-}
-
-// BulkDelete removes all files and directories at the given paths.
-func (s *FileExplorerService) BulkDelete(paths []string) *BulkOperationResponse {
-	response := &BulkOperationResponse{
-		Success: []string{},
-		Failed:  []FailedOperation{},
-	}
-
-	for _, path := range paths {
-		path = utils.ExpandHomePath(path)
-
-		if err := os.RemoveAll(path); err != nil {
-			response.Failed = append(response.Failed, FailedOperation{
-				Path:  path,
-				Error: err.Error(),
-			})
-		} else {
-			response.Success = append(response.Success, path)
-			s.logger.Info("Deleted: %s", path)
-		}
-	}
-
-	return response
-}
-
-// CheckConflicts returns information about which source paths would conflict
-// with existing entries in the destination directory.
-func (s *FileExplorerService) CheckConflicts(sources []string, dest string) []ConflictInfo {
-	dest = utils.ExpandHomePath(dest)
-	conflicts := []ConflictInfo{}
-
-	for _, source := range sources {
-		source = utils.ExpandHomePath(source)
-		sourceName := filepath.Base(source)
-		destPath := filepath.Join(dest, sourceName)
-
-		if _, err := os.Stat(destPath); err == nil {
-			conflicts = append(conflicts, ConflictInfo{
-				Path:     source,
-				DestPath: destPath,
-				Exists:   true,
-			})
-		}
-	}
-
-	return conflicts
-}
-
-// GenerateUniqueName returns a filename that does not conflict with existing
-// entries in basePath by appending a numeric suffix (e.g. "file (1).txt").
-func (s *FileExplorerService) GenerateUniqueName(basePath, name string) string {
-	basePath = utils.ExpandHomePath(basePath)
-	ext := filepath.Ext(name)
-	nameWithoutExt := strings.TrimSuffix(name, ext)
-	
-	counter := 1
-	newName := name
-	newPath := filepath.Join(basePath, newName)
-
-	for {
-		if _, err := os.Stat(newPath); os.IsNotExist(err) {
-			return newName
-		}
-		newName = fmt.Sprintf("%s (%d)%s", nameWithoutExt, counter, ext)
-		newPath = filepath.Join(basePath, newName)
-		counter++
-	}
-}
-
 
 // ResolvePath validates and translates a user-provided path string. It
 // accepts Linux, macOS and Windows path formats, translates Windows-style

@@ -2,9 +2,9 @@ name: Build and Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, v3-upgrade ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, v3-upgrade ]
 
 permissions:
   contents: read
@@ -17,20 +17,40 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v7
       with:
-        go-version-file: 'go.mod'
+        # Build with the latest stable Go; go.mod keeps the 1.25 floor for
+        # contributors. Tools such as staticcheck need a current toolchain.
+        go-version: 'stable'
 
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: 'lts/*'
 
-    - name: Run Go tests
+    - name: Test (Go with race detector, frontend domain)
       run: make test
 
     - name: Build
       run: make build
+
+    - name: Lint (go vet, staticcheck, ESLint)
+      run: make lint
+
+  audit:
+    # Fails the pipeline on high/critical vulnerabilities so a bad upgrade
+    # (or a newly-disclosed CVE) is caught before it ships.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 'lts/*'
+    - name: Install frontend deps
+      run: cd client && npm ci
+    - name: Security audit (high+)
+      run: cd client && npm audit --audit-level=high

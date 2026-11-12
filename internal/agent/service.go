@@ -1,164 +1,218 @@
-// Package agent provides CRUD operations for Kiro agent configurations
-// stored as JSON files within the .kiro/agents directory.
+// Package agent manages Kiro agent specs (.kiro/agents/*.json and *.md).
+//
+// An agent is identified by its file name without extension (its id), which
+// may differ from the "name" field inside the spec. Specs are handled as whole
+// ordered documents: the editor receives every field in file order and saves
+// the complete document back, so unknown/V3 fields, deletions, and key order
+// all round-trip exactly. kiro-cli rejects specs with unknown keys, so this
+// fidelity matters: Config Control must never add, drop, or reorder silently.
 package agent
 
 import (
-	"encoding/json"
-	"fmt"
-	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
-	"kiromanager/internal/models"
+	"kiromanager/internal/kirocli"
+	"kiromanager/internal/shared/ordered"
 	"kiromanager/internal/shared/utils"
 	"kiromanager/internal/system"
 )
 
-// AgentService manages agent configuration files on disk,
-// supporting both global and workspace-scoped agents.
+// Summary is the lightweight view of an agent used by lists.
+type Summary struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Model       string    `json:"model,omitempty"`
+	ToolCount   int       `json:"toolCount"`
+	Format      string    `json:"format"`
+	V3          Readiness `json:"v3"` // 2.x: whether a 2.x config needs Kiro's upgrade (readiness_v2.go)
+	// OverridesGlobal is set in a Workspace when a Global agent has the same
+	// id: Kiro uses this one and warns.
+	OverridesGlobal bool `json:"overridesGlobal,omitempty"`
+}
+
+// AgentService reads and writes agent specs for the active scope.
 type AgentService struct {
-	kiroService *system.KiroService
-	logger      *utils.Logger
+	kiro     *system.KiroService
+	logger   *utils.Logger
+	cli      *kirocli.Runner // 2.x: runs `kiro-cli agent upgrade` (upgrade_v2.go, kirostate_v2.go)
+	states   kiroStates      // 2.x: Kiro's upgrade verdict per agent
+	measurer Measurer        // lists MCP servers' tools to measure them
 }
 
-// NewAgentService creates an AgentService and ensures the agents
-// directory exists under the active config path.
-func NewAgentService(kiroService *system.KiroService, logger *utils.Logger) *AgentService {
-	// Ensure agents directory exists
-	agentsDir := filepath.Join(kiroService.GetConfigPath(), "agents")
-	os.MkdirAll(agentsDir, 0755)
-	return &AgentService{
-		kiroService: kiroService,
-		logger:      logger,
+// NewAgentService creates an AgentService.
+func NewAgentService(kiro *system.KiroService, logger *utils.Logger, cli *kirocli.Runner, measurer Measurer) *AgentService {
+	return &AgentService{kiro: kiro, logger: logger, cli: cli, measurer: measurer}
+}
+
+// List returns a summary of every agent spec in the active scope, by id.
+func (s *AgentService) List() []Summary {
+	out := []Summary{}
+	kiroStates := s.kiroStatesFor(s.kiro.AgentsDir()) // 2.x: remove with V2 support
+	for _, file := range specFiles(s.kiro.AgentsDir()) {
+		path := filepath.Join(s.kiro.AgentsDir(), file)
+		doc, err := readDocument(path)
+		if err != nil {
+			s.logger.Warn("Skipping unreadable agent %s: %v", file, err)
+			continue
+		}
+		sum := summarize(stem(file), doc)
+		view, _ := doc.view()
+		sum.V3 = readiness(path, view, doc.format) // 2.x: remove with V2 support
+		if st, ok := kiroStates[file]; ok {
+			sum.V3 = withKiroState(sum.V3, st)
+		}
+		sum.OverridesGlobal = s.kiro.GetMode() == system.ModeWorkspace && hasSpec(s.kiro.GlobalAgentsDir(), stem(file))
+		out = append(out, sum)
 	}
+	return out
 }
 
-// getAgentsDir returns the current agents directory based on active context
-func (s *AgentService) getAgentsDir() string {
-	return filepath.Join(s.kiroService.GetConfigPath(), "agents")
-}
-
-// GetAllAgents reads every agent JSON file in the agents directory
-// and returns them as a slice.
-func (s *AgentService) GetAllAgents() ([]models.Agent, error) {
-	var agents []models.Agent
-
-	err := filepath.WalkDir(s.getAgentsDir(), func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".json") {
-			return err
-		}
-
-		agent, err := s.loadAgentFromFile(path)
-		if err == nil {
-			agents = append(agents, agent)
-		} else {
-			s.logger.Warn("Failed to load agent %s: %v", path, err)
-		}
-		return nil
-	})
-
-	return agents, err
-}
-
-// GetAgent loads a single agent by its ID (filename without extension).
-func (s *AgentService) GetAgent(id string) (*models.Agent, error) {
-	filePath := filepath.Join(s.getAgentsDir(), id+".json")
-	agent, err := s.loadAgentFromFile(filePath)
+// Get returns the full spec for id as an ordered object.
+func (s *AgentService) Get(id string) (*ordered.Object, error) {
+	path, err := s.existingPath(id)
 	if err != nil {
-		return nil, fmt.Errorf("agent not found: %s", id)
+		return nil, err
 	}
-	return &agent, nil
+	doc, err := readDocument(path)
+	if err != nil {
+		return nil, err
+	}
+	return doc.view()
 }
 
-// CreateAgent persists a new agent to disk. It returns an error if the
-// name is empty or an agent with the same name already exists.
-func (s *AgentService) CreateAgent(agent *models.Agent) error {
-	if agent.Name == "" {
-		return utils.NewAppError("Agent name is required", 400, "INVALID_AGENT")
+// Create writes a new JSON spec whose id is derived from its "name" field.
+func (s *AgentService) Create(spec *ordered.Object) (string, error) {
+	id := utils.SanitizeName(spec.String("name"))
+	if id == "" {
+		return "", utils.BadRequest("Agent name is required", "INVALID_AGENT")
 	}
-
-	// Check if agent already exists
-	filePath := filepath.Join(s.getAgentsDir(), agent.Name+".json")
-	if _, err := os.Stat(filePath); err == nil {
-		return utils.NewAppError(
-			fmt.Sprintf("Agent '%s' already exists. Go to the Agents page, edit that agent's name, and try again.", agent.Name),
-			409,
-			"DUPLICATE_AGENT",
-		)
+	if _, err := s.existingPath(id); err == nil {
+		return "", utils.NewAppError("Agent '"+id+"' already exists", http.StatusConflict, "AGENT_EXISTS")
 	}
-
-	return s.saveAgentToFile(agent)
+	doc := &document{format: formatJSON, fields: spec}
+	return id, doc.write(filepath.Join(s.kiro.AgentsDir(), id+".json"))
 }
 
-// UpdateAgent overwrites an existing agent's JSON file with the provided data.
-func (s *AgentService) UpdateAgent(name string, agent *models.Agent) error {
-	_, err := s.GetAgent(name)
+// Update replaces the spec for id with spec, keeping the file's format.
+func (s *AgentService) Update(id string, spec *ordered.Object) error {
+	path, err := s.existingPath(id)
 	if err != nil {
 		return err
 	}
-
-	return s.saveAgentToFile(agent)
-}
-
-// DeleteAgent removes the agent's JSON file from disk.
-func (s *AgentService) DeleteAgent(name string) error {
-	filePath := filepath.Join(s.getAgentsDir(), name+".json")
-	return os.Remove(filePath)
-}
-
-func (s *AgentService) loadAgentFromFile(filePath string) (models.Agent, error) {
-	var agent models.Agent
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return agent, err
-	}
-	err = json.Unmarshal(data, &agent)
-	return agent, err
-}
-
-func (s *AgentService) saveAgentToFile(agent *models.Agent) error {
-	if agent.Name == "" {
-		return fmt.Errorf("agent name cannot be empty")
-	}
-	filePath := filepath.Join(s.getAgentsDir(), agent.Name+".json")
-	data, err := json.MarshalIndent(agent, "", "  ")
+	doc, err := readDocument(path)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, data, 0644)
+	before, err := doc.signature()
+	if err != nil {
+		return err
+	}
+	if err := doc.apply(spec); err != nil {
+		return err
+	}
+	if after, err := doc.signature(); err == nil && after == before {
+		return nil // nothing changed: leave the file untouched
+	}
+	return doc.write(path)
 }
 
-// GetAllAgentNames returns deduplicated agent names from both the active
-// context and the global config directory.
-func (s *AgentService) GetAllAgentNames() []string {
+// Delete removes the spec file for id.
+func (s *AgentService) Delete(id string) error {
+	path, err := s.existingPath(id)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+// AllNames returns agent ids from the active scope plus global, deduplicated.
+func (s *AgentService) AllNames() []string {
 	seen := map[string]bool{}
-	var names []string
-
-	// Read from active context
-	s.collectAgentNames(s.getAgentsDir(), seen, &names)
-
-	// Also read from global if active context is different
-	globalDir := filepath.Join(s.kiroService.GetGlobalConfigPath(), "agents")
-	if globalDir != s.getAgentsDir() {
-		s.collectAgentNames(globalDir, seen, &names)
+	names := []string{}
+	for _, dir := range []string{s.kiro.AgentsDir(), s.kiro.GlobalAgentsDir()} {
+		for _, f := range specFiles(dir) {
+			if id := stem(f); !seen[id] {
+				seen[id] = true
+				names = append(names, id)
+			}
+		}
 	}
-
 	return names
 }
 
-func (s *AgentService) collectAgentNames(dir string, seen map[string]bool, names *[]string) {
-	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".json") {
-			return err
+// existingPath resolves id to its spec file. JSON wins over Markdown when both
+// exist, matching kiro-cli's resolution order.
+func (s *AgentService) existingPath(id string) (string, error) {
+	id = utils.SanitizeName(id)
+	if id == "" {
+		return "", utils.BadRequest("Agent id is required", "INVALID_AGENT")
+	}
+	for _, ext := range []string{".json", ".md"} {
+		p := filepath.Join(s.kiro.AgentsDir(), id+ext)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p, nil
 		}
-		name := strings.TrimSuffix(d.Name(), ".json")
-		if name != "" && !seen[name] {
-			seen[name] = true
-			*names = append(*names, name)
-		}
-		return nil
-	})
+	}
+	return "", utils.NewAppError("Agent '"+id+"' not found", http.StatusNotFound, "AGENT_NOT_FOUND")
 }
 
+// specFiles lists top-level .json/.md files in dir, sorted, one per id.
+func specFiles(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	byID := map[string]string{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || strings.HasPrefix(name, ".") {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".json" && ext != ".md" {
+			continue
+		}
+		if prev, ok := byID[stem(name)]; !ok || formatOf(prev) == formatMarkdown {
+			byID[stem(name)] = name // prefer .json when both exist
+		}
+	}
+	files := make([]string, 0, len(byID))
+	for _, f := range byID {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	return files
+}
 
+// hasSpec reports whether dir holds an agent spec with this id.
+func hasSpec(dir, id string) bool {
+	for _, f := range specFiles(dir) {
+		if stem(f) == id {
+			return true
+		}
+	}
+	return false
+}
+
+// stem returns a file name without its extension.
+func stem(name string) string { return strings.TrimSuffix(name, filepath.Ext(name)) }
+
+// summarize builds a Summary from a parsed spec.
+func summarize(id string, doc *document) Summary {
+	sum := Summary{ID: id, Name: id, Format: string(doc.format)}
+	if n := doc.fields.String("name"); n != "" {
+		sum.Name = n
+	}
+	sum.Description = doc.fields.String("description")
+	sum.Model = doc.fields.String("model")
+	var tools []any
+	if ok, err := doc.fields.Get("tools", &tools); ok && err == nil {
+		sum.ToolCount = len(tools)
+	}
+	return sum
+}

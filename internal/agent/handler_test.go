@@ -1,131 +1,61 @@
 package agent
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/gorilla/mux"
-	"kiromanager/internal/shared/utils"
-	"kiromanager/internal/system"
 )
 
-func newTestHandler(t *testing.T) (*Handler, string) {
-	t.Helper()
-	dir := t.TempDir()
-	logger := utils.NewLogger()
-	kiroSvc := system.NewKiroService(logger, "test")
-	kiroSvc.SetWorkspace(dir)
-	os.MkdirAll(filepath.Join(dir, ".kiro", "agents"), 0755)
-	svc := NewAgentService(kiroSvc, logger)
-	return NewHandler(svc), dir
-}
-
-func TestHandler_GetAgents_Empty(t *testing.T) {
-	h, _ := newTestHandler(t)
-	req := httptest.NewRequest("GET", "/api/agents", nil)
+func request(h http.HandlerFunc, method, path, name, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if name != "" {
+		req.SetPathValue("name", name)
+	}
 	w := httptest.NewRecorder()
+	h(w, req)
+	return w
+}
 
-	h.GetAgents(w, req)
+func TestHandlerCRUD(t *testing.T) {
+	svc, _ := newTestService(t)
+	h := NewHandler(svc)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
+	if w := request(h.CreateAgent, "POST", "/api/agents", "", `{"name":"a","zeta":1,"alpha":2}`); w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	w := request(h.GetAgent, "GET", "/api/agents/a", "a", "")
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"name":"a","zeta":1,"alpha":2}`) {
+		t.Fatalf("get must keep key order: %d %s", w.Code, w.Body)
+	}
+	if w := request(h.UpdateAgent, "PUT", "/api/agents/a", "a", `{"name":"a"}`); w.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", w.Code, w.Body)
+	}
+	if w := request(h.GetAgents, "GET", "/api/agents", "", ""); !strings.Contains(w.Body.String(), `"id":"a"`) {
+		t.Errorf("list: %s", w.Body)
+	}
+	if w := request(h.DeleteAgent, "DELETE", "/api/agents/a", "a", ""); w.Code != http.StatusNoContent {
+		t.Errorf("delete: %d", w.Code)
 	}
 }
 
-func TestHandler_CreateAndGetAgent(t *testing.T) {
-	h, _ := newTestHandler(t)
-
-	// Create
-	body := `{"name":"test-agent","description":"A test"}`
-	req := httptest.NewRequest("POST", "/api/agents", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateAgent(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("create: expected 200, got %d: %s", w.Code, w.Body.String())
+func TestHandlerErrors(t *testing.T) {
+	svc, _ := newTestService(t)
+	h := NewHandler(svc)
+	cases := []struct {
+		name string
+		w    *httptest.ResponseRecorder
+		want int
+	}{
+		{"get missing", request(h.GetAgent, "GET", "/", "nope", ""), http.StatusNotFound},
+		{"update missing", request(h.UpdateAgent, "PUT", "/", "nope", `{}`), http.StatusNotFound},
+		{"create bad json", request(h.CreateAgent, "POST", "/", "", `{bad`), http.StatusBadRequest},
+		{"create array", request(h.CreateAgent, "POST", "/", "", `[]`), http.StatusBadRequest},
+		{"traversal", request(h.GetAgent, "GET", "/", "../../x", ""), http.StatusNotFound},
 	}
-
-	// Get all
-	req = httptest.NewRequest("GET", "/api/agents", nil)
-	w = httptest.NewRecorder()
-	h.GetAgents(w, req)
-	var agents []map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&agents)
-	if len(agents) != 1 {
-		t.Errorf("expected 1 agent, got %d", len(agents))
-	}
-}
-
-func TestHandler_GetAllAgentNames(t *testing.T) {
-	h, _ := newTestHandler(t)
-	req := httptest.NewRequest("GET", "/api/agents/all-names", nil)
-	w := httptest.NewRecorder()
-
-	h.GetAllAgentNames(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHandler_GetAgentConfig(t *testing.T) {
-	h, _ := newTestHandler(t)
-	req := httptest.NewRequest("GET", "/api/agents/config", nil)
-	w := httptest.NewRecorder()
-
-	h.GetAgentConfig(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHandler_SaveAgentConfig(t *testing.T) {
-	h, _ := newTestHandler(t)
-	req := httptest.NewRequest("POST", "/api/agents/config", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-
-	h.SaveAgentConfig(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHandler_AgentNameTraversal(t *testing.T) {
-	h, _ := newTestHandler(t)
-
-	maliciousNames := []string{
-		"../../etc/important",
-		"../../../.ssh/authorized_keys",
-		"test/../../etc/passwd",
-	}
-
-	for _, name := range maliciousNames {
-		t.Run("GetAgent_"+name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/api/agents/"+name, nil)
-			req = mux.SetURLVars(req, map[string]string{"name": name})
-			w := httptest.NewRecorder()
-			h.GetAgent(w, req)
-			// SanitizeName strips /, \, and .. so the name becomes harmless
-			// The agent won't exist, so we expect 404 not a file read outside agents dir
-			if w.Code == http.StatusOK {
-				t.Errorf("traversal name %q should not return 200", name)
-			}
-		})
-
-		t.Run("DeleteAgent_"+name, func(t *testing.T) {
-			req := httptest.NewRequest("DELETE", "/api/agents/"+name, nil)
-			req = mux.SetURLVars(req, map[string]string{"name": name})
-			w := httptest.NewRecorder()
-			h.DeleteAgent(w, req)
-			if w.Code == http.StatusOK {
-				t.Errorf("traversal name %q should not return 200", name)
-			}
-		})
+	for _, c := range cases {
+		if c.w.Code != c.want {
+			t.Errorf("%s: %d want %d", c.name, c.w.Code, c.want)
+		}
 	}
 }
